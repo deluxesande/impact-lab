@@ -33,8 +33,8 @@ TypeScript types backing this contract live in
 
 ## `POST /api/upload`
 
-Multipart produce-image upload. Backend stores the image in the private MinIO
-bucket and returns a stable object key.
+Multipart produce-image upload. Once implemented, the backend will store the
+image in the private MinIO bucket and return a stable object key.
 
 **Request** — `multipart/form-data`
 
@@ -53,6 +53,14 @@ Limits: max **10 MB**.
 
 **Errors:** `400` missing field · `413` too large · `415` bad type ·
 `401/403` auth (Phase 4) · `500` internal.
+
+> **Phase 1 note:** this endpoint is a **mock**. It validates the upload
+> (content type, size, required fields) and then **discards the file** — the
+> image is not stored anywhere and the returned `objectKey` is fabricated
+> (note the `-mock` marker). The key resolves to nothing and **cannot be
+> retrieved**. Do not treat it as a durable reference or attempt to fetch the
+> image until real MinIO storage lands in Phase 2.5. It is safe to pass the
+> key to `POST /api/farmer/agent` as `imageKey` — that path is also stubbed.
 
 ---
 
