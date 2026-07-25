@@ -73,13 +73,13 @@ Keep scope tight. A believable demo needs:
 3. Consumer places an order → it's routed to a nearby vendor.
 4. One orchestrated model call behind it, with a fallback model.
 
-Skip for demo (mention as fast-follow): real payments, live rider tracking,
-full logistics. Fake the delivery step; make the *ordering + pricing* real.
+Skip for demo (mention as fast-follow): real payments, live rider tracking.
+Fake the delivery step; make the *ordering + pricing* real.
 
 ## 6. How it connects to the other surfaces
 
-- **Farmer logistics (Concept 1)** is the supply: produce bought at fair fixed
-  rates from farmers stocks our stores, enabling the below-supermarket price.
+- **Farmer listings (Concept 1)** is the supply: produce listed at fair fixed
+  rates by farmers, enabling the below-supermarket price.
 - **Store analytics (AGENTS.md)** tells us *which produce sells in which city*
   (Nairobi vs. Kisumu), so we stock the right vendors and price correctly.
 - Consumer demand data flows **back to farmers** as a forecast signal — the loop
@@ -88,4 +88,4 @@ full logistics. Fake the delivery step; make the *ordering + pricing* real.
 ---
 
 *Sourced from the Impact Lab Brainstorm Session, 2026-07-24. See
-`farmer-ai.md` for the farmer logistics concept.*
+`farmer-ai.md` for the farmer produce concept.*
