@@ -46,7 +46,8 @@ function optionalEnv(name: string): string | undefined {
 }
 
 export function getBucket(): string {
-  return process.env.MINIO_BUCKET ?? "produce";
+  // Blank MINIO_BUCKET falls back to the default rather than an empty name.
+  return optionalEnv("MINIO_BUCKET") ?? "produce";
 }
 
 /**
@@ -57,9 +58,11 @@ export function getBucket(): string {
  * client on someone's phone.
  */
 function internalConfig() {
+  // Blank MINIO_PORT falls back to the default instead of Number("") === 0.
+  const port = optionalEnv("MINIO_PORT");
   return {
     endPoint: requireEnv("MINIO_ENDPOINT"),
-    port: Number(process.env.MINIO_PORT ?? 9000),
+    port: port ? Number(port) : 9000,
     useSSL: process.env.MINIO_USE_SSL === "true",
     accessKey: requireEnv("MINIO_ROOT_USER"),
     secretKey: requireEnv("MINIO_ROOT_PASSWORD"),

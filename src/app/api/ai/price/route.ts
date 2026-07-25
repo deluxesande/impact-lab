@@ -1,16 +1,14 @@
 import { NextResponse } from "next/server";
 import { requireUser, AuthError } from "@/lib/auth/require-user";
-import { recommendPrice } from "@/lib/ai/pricing";
+import { runPricingGraph } from "@/lib/ai/graphs/pricing";
 import type { PriceRequest, PricingData, ApiError } from "@/lib/ai/types";
 
 /**
  * POST /api/ai/price — recommend a fair price for a produce type.
  *
- * Shared by the farmer listing flow and any advisory use. Returns PricingData.
- *
- * PHASE 3b STATUS: pricing is a mock (see src/lib/ai/pricing.ts). The real
- * LangGraph pricing graph replaces the helper internals in Phase 3 behind this
- * same contract.
+ * Runs the pricing graph: Shamba Records market data + LLM reasoning, with a
+ * deterministic heuristic fallback if the AI/data is unavailable. Shared by the
+ * farmer listing flow and advisory. Returns PricingData.
  *
  * Any authenticated user may request a price (farmers pricing a listing,
  * consumers seeing context) — no role restriction.
@@ -36,7 +34,7 @@ export async function POST(request: Request): Promise<NextResponse<PricingData |
       );
     }
 
-    const data = recommendPrice({
+    const { data } = await runPricingGraph({
       produceType: body.produceType,
       region: typeof body.region === "string" ? body.region : undefined,
       quantityKg: typeof body.quantityKg === "number" ? body.quantityKg : undefined,

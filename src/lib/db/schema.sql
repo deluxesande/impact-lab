@@ -107,7 +107,9 @@ CREATE TABLE IF NOT EXISTS listings (
   farmer_id    uuid    NOT NULL REFERENCES users (id) ON DELETE CASCADE,
   produce_type text    NOT NULL,
   image_key    text,
-  quantity_kg  numeric(10, 2) NOT NULL CHECK (quantity_kg > 0),
+  -- Stock is consumed atomically by createOrder (see repo.ts); a fully-sold
+  -- listing reaches 0, so the floor is >= 0, not > 0.
+  quantity_kg  numeric(10, 2) NOT NULL CHECK (quantity_kg >= 0),
   price_per_kg numeric(10, 2) NOT NULL CHECK (price_per_kg >= 0),
   currency     text    NOT NULL DEFAULT 'KES',
   active       boolean NOT NULL DEFAULT true,
@@ -130,6 +132,14 @@ CREATE TABLE IF NOT EXISTS orders (
   status       order_status NOT NULL DEFAULT 'placed',
   created_at   timestamptz  NOT NULL DEFAULT now()
 );
+
+-- Relax the listings stock CHECK on databases created before stock consumption
+-- existed (CREATE TABLE IF NOT EXISTS won't alter an existing constraint).
+DO $$ BEGIN
+  ALTER TABLE listings DROP CONSTRAINT IF EXISTS listings_quantity_kg_check;
+  ALTER TABLE listings ADD CONSTRAINT listings_quantity_kg_check CHECK (quantity_kg >= 0);
+EXCEPTION WHEN others THEN NULL;
+END $$;
 
 CREATE INDEX IF NOT EXISTS orders_consumer_idx
   ON orders (consumer_id, created_at DESC);

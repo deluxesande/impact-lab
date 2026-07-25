@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { requireUser, AuthError } from "@/lib/auth/require-user";
 import { createListing } from "@/lib/db/repo";
-import { recommendPrice } from "@/lib/ai/pricing";
+import { runPricingGraph } from "@/lib/ai/graphs/pricing";
 import { presentListings } from "@/lib/api/present-listing";
 import type { CreateListingRequest, Listing, ApiError } from "@/lib/ai/types";
 
@@ -49,10 +49,11 @@ export async function POST(request: Request): Promise<NextResponse<Listing | Api
     }
 
     // Fall back to the AI recommendation when the farmer doesn't set a price.
-    const pricePerKg =
-      body.pricePerKg ??
-      recommendPrice({ produceType: body.produceType }).pricePerKg ??
-      0;
+    let pricePerKg = body.pricePerKg;
+    if (pricePerKg === undefined) {
+      const { data } = await runPricingGraph({ produceType: body.produceType });
+      pricePerKg = data.pricePerKg ?? 0;
+    }
 
     const record = await createListing({
       farmerId: user.id,

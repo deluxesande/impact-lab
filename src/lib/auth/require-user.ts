@@ -16,14 +16,15 @@ import type { UserRole } from "@/lib/ai/types";
  */
 
 /**
- * Dev/CI bypass is OFF unless explicitly enabled with AUTH_DEV_BYPASS=1.
+ * Dev/CI bypass is OFF unless AUTH_DEV_BYPASS=1 *and* we're not in production.
  *
- * Gated by its own flag (not "is CLERK_SECRET_KEY absent") because the Clerk
- * proxy middleware still needs a key to run regardless; tying the bypass to the
- * secret's presence would couple two unrelated concerns. In production this
- * env var is simply never set, so real Clerk enforcement always applies.
+ * Gating on its own flag (not "is CLERK_SECRET_KEY absent") keeps the Clerk
+ * proxy middleware — which needs a key regardless — decoupled from this. The
+ * extra NODE_ENV guard is a safety net: even if AUTH_DEV_BYPASS leaks into a
+ * production environment, real Clerk enforcement still applies.
  */
-const AUTH_ENFORCED = process.env.AUTH_DEV_BYPASS !== "1";
+const AUTH_ENFORCED =
+  process.env.NODE_ENV === "production" || process.env.AUTH_DEV_BYPASS !== "1";
 
 export interface UserContext {
   /** Our users.id (uuid), not the Clerk id. */
@@ -61,7 +62,9 @@ export async function requireUser(requiredRole?: UserRole): Promise<UserContext>
       throw new AuthError("forbidden", `This endpoint requires the ${requiredRole} role.`);
     }
     const user = await getOrCreateUser(hdrs.clerkId, role);
-    return { id: user.id, clerkId: user.clerkId, role: user.role };
+    // Return the role we authorized against, not the stored one, so the context
+    // reflects the current request's identity.
+    return { id: user.id, clerkId: user.clerkId, role };
   }
 
   const { userId, sessionClaims } = await auth();
@@ -79,7 +82,9 @@ export async function requireUser(requiredRole?: UserRole): Promise<UserContext>
   }
 
   const user = await getOrCreateUser(userId, role);
-  return { id: user.id, clerkId: user.clerkId, role: user.role };
+  // Return the role validated from the session's Clerk metadata, not the row's
+  // stored role, so a metadata change takes effect immediately.
+  return { id: user.id, clerkId: user.clerkId, role };
 }
 
 /**
