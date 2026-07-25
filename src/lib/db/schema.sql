@@ -30,6 +30,16 @@ DO $$ BEGIN
 EXCEPTION WHEN duplicate_object THEN NULL;
 END $$;
 
+DO $$ BEGIN
+  CREATE TYPE user_role AS ENUM ('farmer', 'consumer');
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
+
+DO $$ BEGIN
+  CREATE TYPE order_status AS ENUM ('placed', 'mocked_delivered');
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
+
 -- One chat thread, keyed by the client-generated sessionId.
 CREATE TABLE IF NOT EXISTS conversations (
   id         uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -74,3 +84,55 @@ CREATE TABLE IF NOT EXISTS agent_runs (
 
 CREATE INDEX IF NOT EXISTS agent_runs_conversation_created_idx
   ON agent_runs (conversation_id, created_at);
+
+/* -------------------------------------------------------------------------- */
+/* Marketplace (mvp.md): users, listings, orders                              */
+/* -------------------------------------------------------------------------- */
+
+-- Mirror of the Clerk user, with the role captured at sign-up. clerk_id is the
+-- Clerk user id; role gates farmer vs consumer endpoints.
+CREATE TABLE IF NOT EXISTS users (
+  id         uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  clerk_id   text      NOT NULL,
+  role       user_role NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS users_clerk_id_key ON users (clerk_id);
+
+-- A farmer's produce listing. image_key is the private MinIO object key;
+-- consumer reads mint a presigned URL, same pattern as conversation images.
+CREATE TABLE IF NOT EXISTS listings (
+  id           uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  farmer_id    uuid    NOT NULL REFERENCES users (id) ON DELETE CASCADE,
+  produce_type text    NOT NULL,
+  image_key    text,
+  quantity_kg  numeric(10, 2) NOT NULL CHECK (quantity_kg > 0),
+  price_per_kg numeric(10, 2) NOT NULL CHECK (price_per_kg >= 0),
+  currency     text    NOT NULL DEFAULT 'KES',
+  active       boolean NOT NULL DEFAULT true,
+  created_at   timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS listings_active_created_idx
+  ON listings (active, created_at DESC);
+CREATE INDEX IF NOT EXISTS listings_farmer_idx
+  ON listings (farmer_id, created_at DESC);
+
+-- A consumer order against a listing. Delivery is mocked for the MVP.
+CREATE TABLE IF NOT EXISTS orders (
+  id           uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  consumer_id  uuid    NOT NULL REFERENCES users (id) ON DELETE CASCADE,
+  listing_id   uuid    NOT NULL REFERENCES listings (id) ON DELETE RESTRICT,
+  quantity_kg  numeric(10, 2) NOT NULL CHECK (quantity_kg > 0),
+  total_price  numeric(12, 2) NOT NULL CHECK (total_price >= 0),
+  currency     text         NOT NULL DEFAULT 'KES',
+  status       order_status NOT NULL DEFAULT 'placed',
+  created_at   timestamptz  NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS orders_consumer_idx
+  ON orders (consumer_id, created_at DESC);
+-- Powers the farmer dashboard's "incoming orders" via listings join.
+CREATE INDEX IF NOT EXISTS orders_listing_idx
+  ON orders (listing_id, created_at DESC);

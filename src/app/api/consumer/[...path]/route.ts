@@ -1,11 +1,12 @@
 import { notImplemented } from "@/lib/api/not-implemented";
 
 /**
- * /api/consumer/* — catch-all for the RESERVED consumer namespace.
+ * /api/consumer/* — catch-all for consumer paths without a concrete handler.
  *
- * Ensures nested consumer URLs (e.g. /api/consumer/orders,
- * /api/consumer/cart/items) return the documented 501 envelope rather than a
- * 404, matching the `/api/consumer/*` contract in docs/api-contract.md.
+ * Implemented consumer endpoints (`/api/consumer/listings`,
+ * `/api/consumer/order`) have their own route files and take precedence over
+ * this catch-all. Anything else under the namespace (a not-yet-built consumer
+ * feature) returns the documented 501 envelope rather than a bare 404.
  */
 
 export const GET = notImplemented;

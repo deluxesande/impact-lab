@@ -175,15 +175,65 @@ Fetch a conversation with its message history.
 
 ---
 
-## `/api/consumer/*` — reserved
+## Marketplace endpoints (mvp.md surface)
 
-The Android app is dual-role (Farmer & Consumer). This namespace is reserved
-for the consumer grocery-delivery surface (see
-[`consumer-ai.md`](./consumer-ai.md)) and currently returns `501 Not
-Implemented`. Farmer-first is the active milestone.
+These serve **both** the web (Next.js) and Android clients. Auth uses Clerk with
+a `role` (farmer | consumer); role-restricted endpoints return `403` for the
+wrong role. See `docs/mvp.md` for the product scope.
 
-Both `/api/consumer` and any nested path (e.g. `/api/consumer/orders`) return
-the same `501` error envelope, for `GET`, `POST`, `PUT`, `PATCH`, and `DELETE`.
+### `POST /api/ai/price` — price recommendation *(any role)*
+```ts
+// Request:  { produceType: string, region?: string, quantityKg?: number, imageKey?: string }
+// Response: PricingData  { produce, pricePerKg, unit, currency, market, trend }
+```
+
+### `POST /api/ai/cart` — build a cart from natural language *(any role)*
+```ts
+// Request:  { text: string, language?: "en"|"sw" }
+// Response: { items: CartItem[], total, currency, mallComparison? }
+//   CartItem = { listingId, produceType, quantityKg, pricePerKg, lineTotal }
+```
+Items bind to **real active listings**, so the cart is immediately orderable.
+
+### `POST /api/farmer/listing` — publish a listing *(farmer)*
+```ts
+// Request:  { produceType, quantityKg, pricePerKg?, imageKey? }
+//   pricePerKg omitted → filled from the AI recommendation.
+// Response: Listing  (201)
+```
+
+### `GET /api/farmer/listings` — farmer dashboard *(farmer)*
+```ts
+// Response: { listings: Listing[], incomingOrders: Order[] }
+```
+
+### `GET /api/consumer/listings` — browse grid *(any role)*
+```ts
+// Response: { listings: Listing[] }   // active only, newest first, presigned photos
+```
+
+### `POST /api/consumer/order` — place an order *(consumer)*
+```ts
+// Request:  { listingId, quantityKg }
+// Response: Order  (201).  Total computed server-side. Delivery mocked.
+// Errors: 404 listing_unavailable · 409 insufficient_quantity
+```
+
+`Listing` = `{ id, farmerId, produceType, imageUrl?, quantityKg, pricePerKg, currency, active, createdAt }`
+`Order` = `{ id, consumerId, listingId, quantityKg, totalPrice, currency, status, createdAt }`
+
+> `/api/consumer/*` paths without a concrete handler still return `501`.
+
+> **Phase 3b note:** `/api/ai/price` and `/api/ai/cart` use mock logic today
+> (`src/lib/ai/pricing.ts`). The LangGraph pricing/cart graphs (Shamba Records +
+> Gemini→Groq→OpenAI) replace the internals in Phase 3 behind these contracts.
+
+---
+
+## `/api/farmer/agent` — conversational assistant (retained)
+
+The chat-style farmer assistant from earlier phases stays available but is not
+part of the MVP demo flow. See its section above.
 
 ---
 

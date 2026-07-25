@@ -4,7 +4,11 @@ import type {
   ConversationMessage,
   FarmerIntent,
   Language,
+  Listing,
+  Order,
+  OrderStatus,
   PricingData,
+  UserRole,
 } from "@/lib/ai/types";
 
 
@@ -189,4 +193,190 @@ export async function logAgentRun(input: LogAgentRunInput): Promise<void> {
       ${input.error ?? null}
     )
   `;
+}
+
+/* -------------------------------------------------------------------------- */
+/* Users                                                                      */
+/* -------------------------------------------------------------------------- */
+
+export interface UserRow {
+  id: string;
+  clerkId: string;
+  role: UserRole;
+}
+
+/**
+ * Resolve our user row for a Clerk id, creating it on first contact.
+ *
+ * The role is only applied on insert; an existing user keeps their stored role
+ * (a session's role claim shouldn't silently rewrite it here).
+ */
+export async function getOrCreateUser(
+  clerkId: string,
+  role: UserRole,
+): Promise<UserRow> {
+  const sql = getSql();
+  const [row] = await sql<UserRow[]>`
+    INSERT INTO users (clerk_id, role)
+    VALUES (${clerkId}, ${role})
+    ON CONFLICT (clerk_id) DO UPDATE
+      SET clerk_id = EXCLUDED.clerk_id
+    RETURNING id, clerk_id AS "clerkId", role
+  `;
+  return row;
+}
+
+/* -------------------------------------------------------------------------- */
+/* Listings                                                                   */
+/* -------------------------------------------------------------------------- */
+
+/** Row shape as stored; numeric columns arrive as strings from postgres. */
+interface ListingRow {
+  id: string;
+  farmer_id: string;
+  produce_type: string;
+  image_key: string | null;
+  quantity_kg: string;
+  price_per_kg: string;
+  currency: string;
+  active: boolean;
+  created_at: Date;
+}
+
+/**
+ * A stored listing carrying the raw private image key. Route handlers swap it
+ * for a presigned imageUrl, keeping MinIO out of the db layer.
+ */
+export type ListingRecord = Omit<Listing, "imageUrl"> & { imageKey?: string };
+
+function mapListing(r: ListingRow): ListingRecord {
+  return {
+    id: r.id,
+    farmerId: r.farmer_id,
+    produceType: r.produce_type,
+    ...(r.image_key ? { imageKey: r.image_key } : {}),
+    quantityKg: Number(r.quantity_kg),
+    pricePerKg: Number(r.price_per_kg),
+    currency: r.currency,
+    active: r.active,
+    createdAt: r.created_at.toISOString(),
+  };
+}
+
+export interface CreateListingInput {
+  farmerId: string;
+  produceType: string;
+  quantityKg: number;
+  pricePerKg: number;
+  currency?: string;
+  imageKey?: string;
+}
+
+export async function createListing(input: CreateListingInput): Promise<ListingRecord> {
+  const sql = getSql();
+  const [row] = await sql<ListingRow[]>`
+    INSERT INTO listings (farmer_id, produce_type, image_key, quantity_kg, price_per_kg, currency)
+    VALUES (
+      ${input.farmerId},
+      ${input.produceType},
+      ${input.imageKey ?? null},
+      ${input.quantityKg},
+      ${input.pricePerKg},
+      ${input.currency ?? "KES"}
+    )
+    RETURNING *
+  `;
+  return mapListing(row);
+}
+
+/** All active listings, newest first (consumer browse grid). */
+export async function listActiveListings(): Promise<ListingRecord[]> {
+  const sql = getSql();
+  const rows = await sql<ListingRow[]>`
+    SELECT * FROM listings
+    WHERE active = true
+    ORDER BY created_at DESC
+  `;
+  return rows.map(mapListing);
+}
+
+/** A single farmer's listings, newest first (dashboard). */
+export async function listFarmerListings(farmerId: string): Promise<ListingRecord[]> {
+  const sql = getSql();
+  const rows = await sql<ListingRow[]>`
+    SELECT * FROM listings
+    WHERE farmer_id = ${farmerId}
+    ORDER BY created_at DESC
+  `;
+  return rows.map(mapListing);
+}
+
+export async function getListing(id: string): Promise<ListingRecord | null> {
+  const sql = getSql();
+  const [row] = await sql<ListingRow[]>`SELECT * FROM listings WHERE id = ${id}`;
+  return row ? mapListing(row) : null;
+}
+
+/* -------------------------------------------------------------------------- */
+/* Orders                                                                     */
+/* -------------------------------------------------------------------------- */
+
+interface OrderRow {
+  id: string;
+  consumer_id: string;
+  listing_id: string;
+  quantity_kg: string;
+  total_price: string;
+  currency: string;
+  status: OrderStatus;
+  created_at: Date;
+}
+
+function mapOrder(r: OrderRow): Order {
+  return {
+    id: r.id,
+    consumerId: r.consumer_id,
+    listingId: r.listing_id,
+    quantityKg: Number(r.quantity_kg),
+    totalPrice: Number(r.total_price),
+    currency: r.currency,
+    status: r.status,
+    createdAt: r.created_at.toISOString(),
+  };
+}
+
+export interface CreateOrderInput {
+  consumerId: string;
+  listingId: string;
+  quantityKg: number;
+  totalPrice: number;
+  currency?: string;
+}
+
+export async function createOrder(input: CreateOrderInput): Promise<Order> {
+  const sql = getSql();
+  const [row] = await sql<OrderRow[]>`
+    INSERT INTO orders (consumer_id, listing_id, quantity_kg, total_price, currency)
+    VALUES (
+      ${input.consumerId},
+      ${input.listingId},
+      ${input.quantityKg},
+      ${input.totalPrice},
+      ${input.currency ?? "KES"}
+    )
+    RETURNING *
+  `;
+  return mapOrder(row);
+}
+
+/** Orders placed against a given farmer's listings (dashboard "incoming"). */
+export async function listOrdersForFarmer(farmerId: string): Promise<Order[]> {
+  const sql = getSql();
+  const rows = await sql<OrderRow[]>`
+    SELECT o.* FROM orders o
+    JOIN listings l ON l.id = o.listing_id
+    WHERE l.farmer_id = ${farmerId}
+    ORDER BY o.created_at DESC
+  `;
+  return rows.map(mapOrder);
 }
