@@ -32,14 +32,15 @@ TypeScript types backing this contract live in
   unreachable the request fails with `500` — replies are never returned
   unpersisted.
 - **Images:** never returned as permanent public URLs. Uploads yield a private
-  MinIO `objectKey`; history reads return **short-lived presigned GET URLs**.
+  MinIO `objectKey`; history reads return **short-lived presigned GET URLs**
+  (~5 min), minted per request.
 
 ---
 
 ## `POST /api/upload`
 
-Multipart produce-image upload. Once implemented, the backend will store the
-image in the private MinIO bucket and return a stable object key.
+Multipart produce-image upload. The backend streams the image into a **private**
+MinIO bucket and returns a durable object key.
 
 **Request** — `multipart/form-data`
 
@@ -53,19 +54,20 @@ Limits: max **10 MB**.
 **Response** — `201 Created`
 
 ```json
-{ "objectKey": "produce/<sessionId>/<timestamp>-mock.jpg" }
+{ "objectKey": "<sessionId>/<timestamp>-<random>.jpg" }
 ```
 
 **Errors:** `400` missing field · `413` too large · `415` bad type ·
 `401/403` auth (Phase 4) · `500` internal.
 
-> **Phase 1 note:** this endpoint is a **mock**. It validates the upload
-> (content type, size, required fields) and then **discards the file** — the
-> image is not stored anywhere and the returned `objectKey` is fabricated
-> (note the `-mock` marker). The key resolves to nothing and **cannot be
-> retrieved**. Do not treat it as a durable reference or attempt to fetch the
-> image until real MinIO storage lands in Phase 2.5. It is safe to pass the
-> key to `POST /api/farmer/agent` as `imageKey` — that path is also stubbed.
+Pass the returned `objectKey` to `POST /api/farmer/agent` as `imageKey`.
+
+> **Storage model.** The bucket is private — objects are **never** reachable by
+> a permanent public URL, and unsigned requests are refused. Keys carry a
+> random suffix so they can't be guessed or enumerated. To display an image,
+> read the conversation: `GET /api/farmer/conversations/:id` returns a
+> short-lived presigned `imageUrl` (valid ~5 minutes). Treat `objectKey` as an
+> opaque handle to store, not a URL to fetch.
 
 ---
 
@@ -164,10 +166,12 @@ Fetch a conversation with its message history.
 **Errors:** `400` missing id · `404` unknown conversation ·
 `401/403` auth (Phase 4) · `500`.
 
-> **Phase 2 note:** this now reads **real rows from Postgres**, ordered
-> chronologically. Unknown or malformed ids return `404`. One caveat:
-> `imageUrl` currently echoes the stored private object key — it becomes a real
-> short-lived presigned MinIO URL in Phase 2.5.
+> **Phase 2.5 note:** reads **real rows from Postgres**, ordered
+> chronologically. Unknown or malformed ids return `404`. Any message with an
+> image gets a freshly minted **presigned `imageUrl`** (valid ~5 minutes) —
+> mint-on-read, so don't cache these URLs; re-fetch the conversation instead.
+> If an object has gone missing, that message simply comes back without an
+> `imageUrl` rather than failing the whole request.
 
 ---
 
@@ -189,8 +193,8 @@ the same `501` error envelope, for `GET`, `POST`, `PUT`, `PATCH`, and `DELETE`.
 | ----- | ------------------------------------------------------------------- | ------ |
 | 1     | Stub endpoints (mock responses) — unblock Android                   | ✅ done |
 | 2     | Postgres (Docker): `conversations`, `messages`, `agent_runs`        | ✅ done |
-| 2.5   | MinIO (Docker): real `POST /api/upload`, presigned GET for history  | next   |
-| 3     | LangGraph supervisor → pricing/advisory; Shamba Records; model fallback | |
+| 2.5   | MinIO (Docker): real `POST /api/upload`, presigned GET for history  | ✅ done |
+| 3     | LangGraph supervisor → pricing/advisory; Shamba Records; model fallback | next |
 | 4     | Clerk token verification + `role=farmer` gate                       | |
 
 ## Running the backend locally

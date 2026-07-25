@@ -1,7 +1,8 @@
 import { NextResponse } from "next/server";
 import { requireFarmer, AuthError } from "@/lib/auth/require-farmer";
 import { getConversation } from "@/lib/db/repo";
-import type { Conversation, ApiError } from "@/lib/ai/types";
+import { presignMany } from "@/lib/storage/minio";
+import type { Conversation, ConversationMessage, ApiError } from "@/lib/ai/types";
 
 /**
  * GET /api/farmer/conversations/:id — fetch a farmer conversation with history.
@@ -10,12 +11,10 @@ import type { Conversation, ApiError } from "@/lib/ai/types";
  *   Response: { id, sessionId, language, messages: [...] }
  *   Any `imageUrl` values are short-lived presigned GET URLs minted per request.
  *
- * PHASE 2 STATUS: reads real rows from Postgres (conversations + messages),
- * ordered chronologically. Unknown ids now return 404 instead of a fabricated
- * conversation.
- *
- * Still pending: `imageUrl` currently echoes the stored private object key.
- * Phase 2.5 swaps that for a short-lived presigned MinIO GET URL.
+ * PHASE 2.5 STATUS: reads real rows from Postgres (conversations + messages),
+ * ordered chronologically, and mints a short-lived presigned MinIO GET URL for
+ * every message that carries an image. The private object key is never
+ * exposed. Unknown ids return 404.
  *
  * Next.js 16: dynamic route `params` is async and must be awaited.
  */
@@ -46,14 +45,31 @@ export async function GET(
       );
     }
 
-    // TODO(Phase 2.5): mint presigned GET URLs for any image object keys.
-    const conversation = await getConversation(id);
-    if (!conversation) {
+    const record = await getConversation(id);
+    if (!record) {
       return NextResponse.json(
         { error: { code: "not_found", message: "Conversation not found." } },
         { status: 404 },
       );
     }
+
+    // Swap private object keys for short-lived presigned GET URLs. A key that
+    // fails to presign (e.g. the object was removed) simply yields no
+    // imageUrl, so the rest of the history still renders.
+    const keys = record.messages
+      .map((m) => m.imageKey)
+      .filter((k): k is string => Boolean(k));
+    const urls = keys.length > 0 ? await presignMany(keys) : new Map<string, string>();
+
+    const conversation: Conversation = {
+      id: record.id,
+      sessionId: record.sessionId,
+      language: record.language,
+      messages: record.messages.map(({ imageKey, ...rest }): ConversationMessage => {
+        const imageUrl = imageKey ? urls.get(imageKey) : undefined;
+        return imageUrl ? { ...rest, imageUrl } : rest;
+      }),
+    };
 
     return NextResponse.json(conversation, { status: 200 });
   } catch (err) {
