@@ -5,10 +5,10 @@ import {
   appendMessage,
   logAgentRun,
 } from "@/lib/db/repo";
+import { runSupervisor } from "@/lib/ai/graphs/supervisor";
 import type {
   FarmerAgentRequest,
   FarmerAgentResponse,
-  FarmerAgentReply,
   Language,
   ApiError,
 } from "@/lib/ai/types";
@@ -20,13 +20,10 @@ import type {
  *   Request:  { message, sessionId, imageKey?, language? }
  *   Response: { conversationId, reply: { role, content, intent, data? } }
  *
- * PHASE 2 STATUS: PERSISTED, but the reply is still mock.
- * The conversation, both turns, and an agent_runs entry are now written to
- * Postgres, and `conversationId` is a real, re-fetchable row. The reply text
- * itself is still canned — the supervisor → pricing/advisory LangGraph
- * orchestration (Gemini→Groq→OpenAI fallback, Shamba Records tools) replaces
- * the generation step in Phase 3, writing richer agent_runs metadata
- * (graph_used, model_used, tool_calls) through the same log call.
+ * PHASE 3 STATUS: REAL. The supervisor agent classifies intent and routes to
+ * the pricing graph (Shamba Records + LLM) or an advisory LLM reply, with a
+ * heuristic fallback when the AI is unavailable. Both turns and a fully
+ * populated agent_runs row (graph_used, model_used, tool_calls) are persisted.
  *
  * Persistence failures intentionally surface as 500 rather than being
  * swallowed: agent_runs is the refinement dataset, so silent loss is worse
@@ -38,54 +35,6 @@ const SUPPORTED_LANGUAGES: readonly Language[] = ["en", "sw"] as const;
 
 function isLanguage(value: unknown): value is Language {
   return typeof value === "string" && (SUPPORTED_LANGUAGES as readonly string[]).includes(value);
-}
-
-/** Naive keyword heuristic standing in for the real supervisor intent router. */
-function classifyIntent(message: string): "pricing" | "advisory" {
-  const priceSignals = ["price", "worth", "sell", "rate", "bei", "kg", "kilo", "bag"];
-  const lower = message.toLowerCase();
-  return priceSignals.some((s) => lower.includes(s)) ? "pricing" : "advisory";
-}
-
-function mockPricingReply(language: Language): FarmerAgentReply {
-  const content =
-    language === "sw"
-      ? "Kulingana na data ya hivi karibuni ya Soko la Gikomba, bei ya haki ya mahindi yako " +
-        "ni takriban KES 50 kwa kilo (rejea ya jumla: KES 4,500 kwa gunia la kilo 90). " +
-        "Bei zinapanda wiki hii."
-      : "Based on recent Gikomba Market data, a fair rate for your maize is about " +
-        "KES 50 per kg (wholesale reference: KES 4,500 per 90kg bag). Prices are trending up this week.";
-
-  return {
-    role: "assistant",
-    intent: "pricing",
-    content,
-    data: {
-      produce: "Maize",
-      pricePerKg: 50,
-      unit: "90kg bag",
-      currency: "KES",
-      market: "Gikomba Market",
-      trend: "up",
-    },
-  };
-}
-
-function mockAdvisoryReply(language: Language): FarmerAgentReply {
-  const content =
-    language === "sw"
-      ? "Kwa msimu ujao wa mvua fupi, maharagwe na sukuma wiki ni chaguo nzuri — hukomaa " +
-        "haraka na mahitaji ni thabiti. Badilisha kutoka mahindi katika shamba hilo ili " +
-        "kupunguza wadudu, na andaa udongo kwa mbolea ya samadi kabla ya kupanda."
-      : "For the coming short-rains season, beans and sukuma wiki are good choices — " +
-        "they mature quickly and demand is steady. Rotate away from maize on that plot " +
-        "to reduce pest pressure, and prepare the soil with well-rotted manure before planting.";
-
-  return {
-    role: "assistant",
-    intent: "advisory",
-    content,
-  };
 }
 
 export async function POST(
@@ -141,13 +90,11 @@ export async function POST(
       imageKey,
     });
 
-    // TODO(Phase 3): replace this block with the supervisor graph run and
-    // record graph_used / model_used / tool_calls on the agent run below.
+    // Run the supervisor agent (intent → pricing graph or advisory LLM).
     const startedAt = Date.now();
-    const intent = classifyIntent(message);
-    const reply =
-      intent === "pricing" ? mockPricingReply(language) : mockAdvisoryReply(language);
+    const result = await runSupervisor(message, language);
     const latencyMs = Date.now() - startedAt;
+    const reply = result.reply;
 
     const assistantMessageId = await appendMessage({
       conversationId: conversation.id,
@@ -159,7 +106,10 @@ export async function POST(
     await logAgentRun({
       conversationId: conversation.id,
       messageId: assistantMessageId,
-      intent,
+      intent: result.intent,
+      graphUsed: result.intent,
+      modelUsed: result.model ?? result.source,
+      toolCalls: result.toolCalls.length ? result.toolCalls : undefined,
       structuredOutput: reply.data,
       latencyMs,
     });
