@@ -85,7 +85,7 @@ The farmer AI co-pilot. A supervisor routes the message to a **pricing** or
 | `message`   | string            | yes      | Non-empty                              |
 | `sessionId` | string            | yes      | Groups messages into a conversation    |
 | `imageKey`  | string            | no       | `objectKey` from `POST /api/upload`    |
-| `language`  | `"en"` \| `"sw"`  | no       | Defaults to `"en"`                     |
+| `language`  | `"en"` \| `"sw"`  | no       | Defaults to `"en"`; any other value → `400` |
 
 **Response** — `200 OK`
 
@@ -111,10 +111,13 @@ The farmer AI co-pilot. A supervisor routes the message to a **pricing** or
 - `intent` is `"pricing"` or `"advisory"`.
 - `data` is present for **pricing** replies; omitted for pure advisory replies.
 
-**Errors:** `400` invalid/missing body · `401/403` auth (Phase 4) · `500`.
+**Errors:** `400` invalid/missing body, unsupported `language` ·
+`401/403` auth (Phase 4) · `500`.
 
 > **Phase 1 note:** intent is decided by a keyword heuristic and replies are
 > mock data. Real Shamba-Records-backed pricing and LLM advisory land in Phase 3.
+> `language` **is** validated and honored — `"sw"` returns Swahili mock copy —
+> but the underlying content is still canned, not model-generated.
 
 ---
 
@@ -159,6 +162,9 @@ The Android app is dual-role (Farmer & Consumer). This namespace is reserved
 for the consumer grocery-delivery surface (see
 [`consumer-ai.md`](./consumer-ai.md)) and currently returns `501 Not
 Implemented`. Farmer-first is the active milestone.
+
+Both `/api/consumer` and any nested path (e.g. `/api/consumer/orders`) return
+the same `501` error envelope, for `GET`, `POST`, `PUT`, `PATCH`, and `DELETE`.
 
 ---
 

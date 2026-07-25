@@ -28,6 +28,17 @@ export async function POST(request: Request): Promise<NextResponse<UploadRespons
       );
     }
 
+    // Reject oversized bodies *before* formData() buffers the whole multipart
+    // payload into memory. Content-Length includes multipart overhead, so this
+    // is a coarse early guard; the exact per-file check still runs below.
+    const declaredLength = Number(request.headers.get("content-length") ?? "0");
+    if (Number.isFinite(declaredLength) && declaredLength > MAX_BYTES) {
+      return NextResponse.json(
+        { error: { code: "file_too_large", message: "Image exceeds the 10 MB limit." } },
+        { status: 413 },
+      );
+    }
+
     const form = await request.formData();
     const file = form.get("file");
     const sessionId = form.get("sessionId");

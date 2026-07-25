@@ -5,6 +5,7 @@ import type {
   FarmerAgentRequest,
   FarmerAgentResponse,
   FarmerAgentReply,
+  Language,
   ApiError,
 } from "@/lib/ai/types";
 
@@ -21,6 +22,13 @@ import type {
  * Shamba Records tools) replaces this body in Phase 3.
  */
 
+/** Languages the contract supports. Mirrors the `Language` union. */
+const SUPPORTED_LANGUAGES: readonly Language[] = ["en", "sw"] as const;
+
+function isLanguage(value: unknown): value is Language {
+  return typeof value === "string" && (SUPPORTED_LANGUAGES as readonly string[]).includes(value);
+}
+
 /** Naive keyword heuristic standing in for the real supervisor intent router. */
 function classifyIntent(message: string): "pricing" | "advisory" {
   const priceSignals = ["price", "worth", "sell", "rate", "bei", "kg", "kilo", "bag"];
@@ -28,13 +36,19 @@ function classifyIntent(message: string): "pricing" | "advisory" {
   return priceSignals.some((s) => lower.includes(s)) ? "pricing" : "advisory";
 }
 
-function mockPricingReply(): FarmerAgentReply {
+function mockPricingReply(language: Language): FarmerAgentReply {
+  const content =
+    language === "sw"
+      ? "Kulingana na data ya hivi karibuni ya Soko la Gikomba, bei ya haki ya mahindi yako " +
+        "ni takriban KES 50 kwa kilo (rejea ya jumla: KES 4,500 kwa gunia la kilo 90). " +
+        "Bei zinapanda wiki hii."
+      : "Based on recent Gikomba Market data, a fair rate for your maize is about " +
+        "KES 50 per kg (wholesale reference: KES 4,500 per 90kg bag). Prices are trending up this week.";
+
   return {
     role: "assistant",
     intent: "pricing",
-    content:
-      "Based on recent Gikomba Market data, a fair rate for your maize is about " +
-      "KES 50 per kg (wholesale reference: KES 4,500 per 90kg bag). Prices are trending up this week.",
+    content,
     data: {
       produce: "Maize",
       pricePerKg: 50,
@@ -46,14 +60,20 @@ function mockPricingReply(): FarmerAgentReply {
   };
 }
 
-function mockAdvisoryReply(): FarmerAgentReply {
+function mockAdvisoryReply(language: Language): FarmerAgentReply {
+  const content =
+    language === "sw"
+      ? "Kwa msimu ujao wa mvua fupi, maharagwe na sukuma wiki ni chaguo nzuri — hukomaa " +
+        "haraka na mahitaji ni thabiti. Badilisha kutoka mahindi katika shamba hilo ili " +
+        "kupunguza wadudu, na andaa udongo kwa mbolea ya samadi kabla ya kupanda."
+      : "For the coming short-rains season, beans and sukuma wiki are good choices — " +
+        "they mature quickly and demand is steady. Rotate away from maize on that plot " +
+        "to reduce pest pressure, and prepare the soil with well-rotted manure before planting.";
+
   return {
     role: "assistant",
     intent: "advisory",
-    content:
-      "For the coming short-rains season, beans and sukuma wiki are good choices — " +
-      "they mature quickly and demand is steady. Rotate away from maize on that plot " +
-      "to reduce pest pressure, and prepare the soil with well-rotted manure before planting.",
+    content,
   };
 }
 
@@ -86,11 +106,24 @@ export async function POST(
         { status: 400 },
       );
     }
+    if (body.language !== undefined && !isLanguage(body.language)) {
+      return NextResponse.json(
+        {
+          error: {
+            code: "unsupported_language",
+            message: `Unsupported 'language'. Supported: ${SUPPORTED_LANGUAGES.join(", ")}.`,
+          },
+        },
+        { status: 400 },
+      );
+    }
+    const language: Language = body.language ?? "en";
 
     // TODO(Phase 3): run the supervisor graph; TODO(Phase 2): persist the
     // conversation + messages and log the run to agent_runs.
     const intent = classifyIntent(message);
-    const reply = intent === "pricing" ? mockPricingReply() : mockAdvisoryReply();
+    const reply =
+      intent === "pricing" ? mockPricingReply(language) : mockAdvisoryReply(language);
 
     return NextResponse.json(
       { conversationId: randomUUID(), reply },
