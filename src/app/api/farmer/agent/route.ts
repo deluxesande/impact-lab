@@ -1,6 +1,10 @@
 import { NextResponse } from "next/server";
-import { randomUUID } from "node:crypto";
 import { requireFarmer, AuthError } from "@/lib/auth/require-farmer";
+import {
+  getOrCreateConversation,
+  appendMessage,
+  logAgentRun,
+} from "@/lib/db/repo";
 import type {
   FarmerAgentRequest,
   FarmerAgentResponse,
@@ -16,10 +20,17 @@ import type {
  *   Request:  { message, sessionId, imageKey?, language? }
  *   Response: { conversationId, reply: { role, content, intent, data? } }
  *
- * PHASE 1 STATUS: STUBBED. Returns well-shaped mock pricing/advisory replies
- * so the Android team can build against the contract. The real supervisor →
- * pricing/advisory LangGraph orchestration (Gemini→Groq→OpenAI fallback,
- * Shamba Records tools) replaces this body in Phase 3.
+ * PHASE 2 STATUS: PERSISTED, but the reply is still mock.
+ * The conversation, both turns, and an agent_runs entry are now written to
+ * Postgres, and `conversationId` is a real, re-fetchable row. The reply text
+ * itself is still canned — the supervisor → pricing/advisory LangGraph
+ * orchestration (Gemini→Groq→OpenAI fallback, Shamba Records tools) replaces
+ * the generation step in Phase 3, writing richer agent_runs metadata
+ * (graph_used, model_used, tool_calls) through the same log call.
+ *
+ * Persistence failures intentionally surface as 500 rather than being
+ * swallowed: agent_runs is the refinement dataset, so silent loss is worse
+ * than a failed request.
  */
 
 /** Languages the contract supports. Mirrors the `Language` union. */
@@ -118,15 +129,43 @@ export async function POST(
       );
     }
     const language: Language = body.language ?? "en";
+    const imageKey = typeof body.imageKey === "string" ? body.imageKey : undefined;
 
-    // TODO(Phase 3): run the supervisor graph; TODO(Phase 2): persist the
-    // conversation + messages and log the run to agent_runs.
+    // One conversation per sessionId; repeat calls append to the same thread.
+    const conversation = await getOrCreateConversation(sessionId, language);
+
+    await appendMessage({
+      conversationId: conversation.id,
+      role: "user",
+      content: message,
+      imageKey,
+    });
+
+    // TODO(Phase 3): replace this block with the supervisor graph run and
+    // record graph_used / model_used / tool_calls on the agent run below.
+    const startedAt = Date.now();
     const intent = classifyIntent(message);
     const reply =
       intent === "pricing" ? mockPricingReply(language) : mockAdvisoryReply(language);
+    const latencyMs = Date.now() - startedAt;
+
+    const assistantMessageId = await appendMessage({
+      conversationId: conversation.id,
+      role: "assistant",
+      content: reply.content,
+      data: reply.data,
+    });
+
+    await logAgentRun({
+      conversationId: conversation.id,
+      messageId: assistantMessageId,
+      intent,
+      structuredOutput: reply.data,
+      latencyMs,
+    });
 
     return NextResponse.json(
-      { conversationId: randomUUID(), reply },
+      { conversationId: conversation.id, reply },
       { status: 200 },
     );
   } catch (err) {

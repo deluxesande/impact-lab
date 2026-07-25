@@ -1,0 +1,51 @@
+# Local / Linode infrastructure for the Impact Lab backend.
+#
+#   docker compose up -d
+#   bun run db:migrate
+#
+# Postgres backs conversations, messages, and the agent_runs refinement log.
+# MinIO is declared now (Phase 2.5 will wire real image storage to it) so the
+# whole stack comes up with one command and teammates don't need a second pass.
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: impact-lab-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-impactlab}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-impactlab}
+      POSTGRES_DB: ${POSTGRES_DB:-impactlab}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-impactlab} -d ${POSTGRES_DB:-impactlab}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # Phase 2.5 — private object storage for farmer produce photos.
+  minio:
+    image: minio/minio:latest
+    container_name: impact-lab-minio
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
+    ports:
+      - "${MINIO_PORT:-9000}:9000"      # S3 API
+      - "${MINIO_CONSOLE_PORT:-9001}:9001"  # web console
+    volumes:
+      - minio-data:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  postgres-data:
+  minio-data:
