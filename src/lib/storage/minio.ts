@@ -24,6 +24,7 @@ export const PRESIGNED_GET_TTL_SECONDS = 300; // 5 minutes
 
 const globalForStorage = globalThis as unknown as {
   __impactLabMinio?: Client;
+  __impactLabPublicMinio?: Client;
   __impactLabBucketReady?: Promise<void>;
 };
 
@@ -33,22 +34,86 @@ function requireEnv(name: string): string {
   return value;
 }
 
+/**
+ * Read an optional env var, treating an empty string as unset.
+ *
+ * `.env` files routinely carry blank placeholders, and `??` alone would accept
+ * `""` as a real value — yielding, for example, an empty MinIO host.
+ */
+function optionalEnv(name: string): string | undefined {
+  const value = process.env[name];
+  return value && value.trim().length > 0 ? value : undefined;
+}
+
 export function getBucket(): string {
   return process.env.MINIO_BUCKET ?? "produce";
 }
 
-/** Lazily build the client so `next build` doesn't require MinIO env vars. */
+/**
+ * Connection details for talking to MinIO from the server.
+ *
+ * On a deployed stack this is typically an internal address (a Docker service
+ * name such as `minio`, or localhost), which is NOT reachable by an Android
+ * client on someone's phone.
+ */
+function internalConfig() {
+  return {
+    endPoint: requireEnv("MINIO_ENDPOINT"),
+    port: Number(process.env.MINIO_PORT ?? 9000),
+    useSSL: process.env.MINIO_USE_SSL === "true",
+    accessKey: requireEnv("MINIO_ROOT_USER"),
+    secretKey: requireEnv("MINIO_ROOT_PASSWORD"),
+  };
+}
+
+/**
+ * Connection details used ONLY to sign URLs handed to clients.
+ *
+ * A presigned URL embeds the host of the client that signed it, and the
+ * signature covers that host — so it cannot be rewritten after the fact. If we
+ * signed with the internal address, the Android app would receive something
+ * like `http://minio:9000/...` (or `localhost`, meaning the phone itself) and
+ * every image would fail to load.
+ *
+ * MINIO_PUBLIC_* therefore describes how the outside world reaches MinIO.
+ * It falls back to the internal config so local development still works, where
+ * the two genuinely are the same host.
+ */
+function publicConfig() {
+  const internal = internalConfig();
+  const port = optionalEnv("MINIO_PUBLIC_PORT");
+  const useSSL = optionalEnv("MINIO_PUBLIC_USE_SSL");
+  return {
+    ...internal,
+    endPoint: optionalEnv("MINIO_PUBLIC_ENDPOINT") ?? internal.endPoint,
+    port: port ? Number(port) : internal.port,
+    useSSL: useSSL ? useSSL === "true" : internal.useSSL,
+    // Pin a region so presignedGetObject signs offline. Without it the client
+    // makes a live getBucketLocation call to resolve the region first — which
+    // fails (ECONNREFUSED) when the public host isn't reachable from the
+    // server, exactly the split-host case this client exists for. Signing is
+    // then a pure local operation and never touches the public host.
+    region: optionalEnv("MINIO_REGION") ?? "us-east-1",
+  };
+}
+
+/**
+ * Client for server-side operations (upload, stat, bucket bootstrap).
+ * Lazily built so `next build` doesn't require MinIO env vars.
+ */
 export function getStorage(): Client {
   if (!globalForStorage.__impactLabMinio) {
-    globalForStorage.__impactLabMinio = new Client({
-      endPoint: requireEnv("MINIO_ENDPOINT"),
-      port: Number(process.env.MINIO_PORT ?? 9000),
-      useSSL: process.env.MINIO_USE_SSL === "true",
-      accessKey: requireEnv("MINIO_ROOT_USER"),
-      secretKey: requireEnv("MINIO_ROOT_PASSWORD"),
-    });
+    globalForStorage.__impactLabMinio = new Client(internalConfig());
   }
   return globalForStorage.__impactLabMinio;
+}
+
+/** Client used solely to mint presigned URLs against the public host. */
+export function getPublicStorage(): Client {
+  if (!globalForStorage.__impactLabPublicMinio) {
+    globalForStorage.__impactLabPublicMinio = new Client(publicConfig());
+  }
+  return globalForStorage.__impactLabPublicMinio;
 }
 
 /**
@@ -108,20 +173,39 @@ export async function putImage(
   return objectKey;
 }
 
-/** Mint a short-lived presigned GET URL for a stored object. */
+/**
+ * Mint a short-lived presigned GET URL for a stored object.
+ *
+ * Signed against the PUBLIC host so the returned URL is reachable by the
+ * client. Note this is a local signing operation — it does not contact MinIO
+ * and therefore cannot tell whether the object actually exists.
+ */
 export async function presignGet(
   objectKey: string,
   ttlSeconds: number = PRESIGNED_GET_TTL_SECONDS,
 ): Promise<string> {
-  return getStorage().presignedGetObject(getBucket(), objectKey, ttlSeconds);
+  return getPublicStorage().presignedGetObject(getBucket(), objectKey, ttlSeconds);
+}
+
+/** S3/MinIO error codes meaning "this object simply isn't there". */
+const NOT_FOUND_CODES = new Set(["NotFound", "NoSuchKey"]);
+
+function isNotFound(err: unknown): boolean {
+  const code = (err as { code?: string } | null)?.code;
+  return typeof code === "string" && NOT_FOUND_CODES.has(code);
 }
 
 /**
- * Presign a batch of keys, tolerating individual failures.
+ * Presign a batch of keys, skipping only objects that are genuinely gone.
  *
- * Conversation history should still render if one object is missing (e.g.
- * manually deleted), so a failed presign yields undefined rather than
- * failing the whole request.
+ * Existence is checked with statObject because presigning is a local signing
+ * operation that would happily produce a URL for a key that doesn't exist.
+ *
+ * Only a NotFound is tolerated (an object deleted out from under us shouldn't
+ * break the whole conversation). Every other failure — bad credentials,
+ * misconfiguration, MinIO being unreachable — is rethrown, so a broken storage
+ * layer surfaces as an error instead of silently rendering every conversation
+ * without its images.
  */
 export async function presignMany(
   keys: string[],
@@ -130,10 +214,12 @@ export async function presignMany(
   await Promise.all(
     keys.map(async (key) => {
       try {
-        out.set(key, await presignGet(key));
-      } catch {
-        // leave unset; caller omits imageUrl for this message
+        await getStorage().statObject(getBucket(), key);
+      } catch (err) {
+        if (isNotFound(err)) return; // leave unset; caller omits imageUrl
+        throw err;
       }
+      out.set(key, await presignGet(key));
     }),
   );
   return out;
