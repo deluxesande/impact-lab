@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import Link from "next/link";
 import { Geist, Geist_Mono } from "next/font/google";
 import {
   ClerkProvider,
@@ -38,9 +39,9 @@ export default function RootLayout({
       >
         <body className="min-h-full flex flex-col bg-zinc-50 dark:bg-black">
           <header className="flex items-center justify-between border-b border-black/[.08] px-6 py-4 dark:border-white/[.145]">
-            <a href="/" className="font-semibold tracking-tight">
+            <Link href="/" className="font-semibold tracking-tight">
               Impact&nbsp;Lab
-            </a>
+            </Link>
             <nav className="flex items-center gap-3 text-sm">
               <Show when="signed-out">
                 <SignInButton mode="modal" />
