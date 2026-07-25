@@ -349,24 +349,60 @@ export interface CreateOrderInput {
   consumerId: string;
   listingId: string;
   quantityKg: number;
-  totalPrice: number;
+  /** Unit price to bill at; total is computed here to stay consistent with stock. */
+  pricePerKg: number;
   currency?: string;
 }
 
+/** Thrown when a listing is missing/inactive or lacks the requested stock. */
+export class InsufficientStockError extends Error {
+  constructor() {
+    super("Listing is unavailable or has insufficient stock.");
+    this.name = "InsufficientStockError";
+  }
+}
+
+/**
+ * Place an order and consume the listing's stock atomically.
+ *
+ * A conditional UPDATE decrements quantity_kg only when the listing is active
+ * and has enough stock; both the decrement and the order insert run in one
+ * transaction. If the UPDATE matches no row (sold out, inactive, gone), the
+ * whole thing rolls back and InsufficientStockError is thrown — closing the
+ * check-then-act race where two concurrent orders could oversell.
+ *
+ * @throws {InsufficientStockError}
+ */
 export async function createOrder(input: CreateOrderInput): Promise<Order> {
   const sql = getSql();
-  const [row] = await sql<OrderRow[]>`
-    INSERT INTO orders (consumer_id, listing_id, quantity_kg, total_price, currency)
-    VALUES (
-      ${input.consumerId},
-      ${input.listingId},
-      ${input.quantityKg},
-      ${input.totalPrice},
-      ${input.currency ?? "KES"}
-    )
-    RETURNING *
-  `;
-  return mapOrder(row);
+  const totalPrice = Math.round(input.quantityKg * input.pricePerKg * 100) / 100;
+
+  return sql.begin(async (tx) => {
+    const updated = await tx<{ currency: string }[]>`
+      UPDATE listings
+      SET quantity_kg = quantity_kg - ${input.quantityKg}
+      WHERE id = ${input.listingId}
+        AND active = true
+        AND quantity_kg >= ${input.quantityKg}
+      RETURNING currency
+    `;
+    if (updated.length === 0) {
+      throw new InsufficientStockError();
+    }
+
+    const [row] = await tx<OrderRow[]>`
+      INSERT INTO orders (consumer_id, listing_id, quantity_kg, total_price, currency)
+      VALUES (
+        ${input.consumerId},
+        ${input.listingId},
+        ${input.quantityKg},
+        ${totalPrice},
+        ${input.currency ?? updated[0].currency}
+      )
+      RETURNING *
+    `;
+    return mapOrder(row);
+  });
 }
 
 /** Orders placed against a given farmer's listings (dashboard "incoming"). */

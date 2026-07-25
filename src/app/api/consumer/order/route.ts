@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { requireUser, AuthError } from "@/lib/auth/require-user";
-import { getListing, createOrder } from "@/lib/db/repo";
+import { getListing, createOrder, InsufficientStockError } from "@/lib/db/repo";
+import { isUuid } from "@/lib/api/uuid";
 import type { CreateOrderRequest, Order, ApiError } from "@/lib/ai/types";
 
 /**
@@ -31,6 +32,12 @@ export async function POST(request: Request): Promise<NextResponse<Order | ApiEr
         { status: 400 },
       );
     }
+    if (!isUuid(body.listingId)) {
+      return NextResponse.json(
+        { error: { code: "invalid_listing", message: "'listingId' must be a valid UUID." } },
+        { status: 400 },
+      );
+    }
     if (typeof body.quantityKg !== "number" || !(body.quantityKg > 0)) {
       return NextResponse.json(
         { error: { code: "invalid_quantity", message: "'quantityKg' must be a positive number." } },
@@ -38,6 +45,9 @@ export async function POST(request: Request): Promise<NextResponse<Order | ApiEr
       );
     }
 
+    // Fetch the listing for a friendly 404 and the unit price. Stock is NOT
+    // enforced from this snapshot — createOrder consumes stock atomically, so
+    // it stays correct under concurrent orders.
     const listing = await getListing(body.listingId);
     if (!listing || !listing.active) {
       return NextResponse.json(
@@ -45,28 +55,25 @@ export async function POST(request: Request): Promise<NextResponse<Order | ApiEr
         { status: 404 },
       );
     }
-    if (body.quantityKg > listing.quantityKg) {
-      return NextResponse.json(
-        {
-          error: {
-            code: "insufficient_quantity",
-            message: `Only ${listing.quantityKg} kg is available.`,
-          },
-        },
-        { status: 409 },
-      );
+
+    try {
+      const order = await createOrder({
+        consumerId: user.id,
+        listingId: listing.id,
+        quantityKg: body.quantityKg,
+        pricePerKg: listing.pricePerKg,
+        currency: listing.currency,
+      });
+      return NextResponse.json(order, { status: 201 });
+    } catch (err) {
+      if (err instanceof InsufficientStockError) {
+        return NextResponse.json(
+          { error: { code: "insufficient_quantity", message: "Insufficient stock for that quantity." } },
+          { status: 409 },
+        );
+      }
+      throw err;
     }
-
-    const totalPrice = Math.round(body.quantityKg * listing.pricePerKg * 100) / 100;
-    const order = await createOrder({
-      consumerId: user.id,
-      listingId: listing.id,
-      quantityKg: body.quantityKg,
-      totalPrice,
-      currency: listing.currency,
-    });
-
-    return NextResponse.json(order, { status: 201 });
   } catch (err) {
     if (err instanceof AuthError) {
       const status = err.code === "unauthorized" ? 401 : 403;

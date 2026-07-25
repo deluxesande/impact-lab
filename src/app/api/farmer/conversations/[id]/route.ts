@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { requireFarmer, AuthError } from "@/lib/auth/require-farmer";
 import { getConversation } from "@/lib/db/repo";
 import { presignMany } from "@/lib/storage/minio";
+import { isUuid } from "@/lib/api/uuid";
 import type { Conversation, ConversationMessage, ApiError } from "@/lib/ai/types";
 
 /**
@@ -19,9 +20,6 @@ import type { Conversation, ConversationMessage, ApiError } from "@/lib/ai/types
  * Next.js 16: dynamic route `params` is async and must be awaited.
  */
 
-const UUID_RE =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-
 export async function GET(
   _request: Request,
   { params }: { params: Promise<{ id: string }> },
@@ -38,7 +36,7 @@ export async function GET(
     }
     // The column is uuid; a malformed id would make Postgres raise rather than
     // return no rows, so treat "not a uuid" as "no such conversation".
-    if (!UUID_RE.test(id)) {
+    if (!isUuid(id)) {
       return NextResponse.json(
         { error: { code: "not_found", message: "Conversation not found." } },
         { status: 404 },

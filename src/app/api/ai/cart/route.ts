@@ -19,6 +19,30 @@ const KG_PER_PERSON = 0.5;
 /** Assumed supermarket/mall markup over our price, for the comparison badge. */
 const MALL_MARKUP = 1.75;
 
+/** Escape a string for safe use inside a RegExp. */
+function escapeRegExp(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/**
+ * Does the (normalized) text mention this produce as a whole word?
+ *
+ * Anchored on word boundaries so short names don't match inside unrelated words
+ * (the previous substring check let "pea" match "please"). A simple regular
+ * plural is tolerated in both directions ("onion" ↔ "onions") by allowing an
+ * optional trailing "s". Multi-word names ("sukuma wiki") match as a phrase.
+ *
+ * Irregular plurals (tomato/tomatoes) are NOT handled — this heuristic matcher
+ * is a placeholder replaced by the LLM cart builder in Phase 3, which resolves
+ * produce names semantically. The fix here is scoped to the reported issue
+ * (spurious substring matches), not to full stemming.
+ */
+function mentionsProduce(text: string, produce: string): boolean {
+  const stem = produce.endsWith("s") ? produce.slice(0, -1) : produce;
+  const pattern = new RegExp(`\\b${escapeRegExp(stem)}s?\\b`, "i");
+  return pattern.test(text);
+}
+
 /** Pull a "for N people" serving count out of the text; default 1. */
 function parseServings(text: string): number {
   const m = text.match(/(\d+)\s*(?:people|person|pax|servings?)/i);
@@ -52,11 +76,13 @@ export async function POST(request: Request): Promise<NextResponse<CartResponse 
     const listings = await listActiveListings();
 
     // Match each active listing whose produce is mentioned in the text, taking
-    // the cheapest listing per produce type so the cart minimizes cost.
+    // the cheapest listing per produce type so the cart minimizes cost. Match on
+    // whole words so "onion" doesn't match "onions" spuriously and short names
+    // don't match inside unrelated words.
     const cheapestByProduce = new Map<string, (typeof listings)[number]>();
     for (const l of listings) {
       const key = normalizeProduce(l.produceType);
-      if (!text.includes(key)) continue;
+      if (!mentionsProduce(text, key)) continue;
       const current = cheapestByProduce.get(key);
       if (!current || l.pricePerKg < current.pricePerKg) {
         cheapestByProduce.set(key, l);

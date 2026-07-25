@@ -17,10 +17,14 @@ TypeScript types backing this contract live in
 ## Conventions
 
 - **Base:** all endpoints are served by Next.js under `/api/*`.
-- **Auth:** farmer endpoints will require a Clerk bearer token with
-  `role = farmer`. **Phase 1 stubs this** (`requireFarmer()` is permissive);
-  send requests without auth for now, but design the client to attach the
-  Clerk token — enforcement flips on in Phase 4.
+- **Auth:** requests carry a Clerk session; the backend resolves the caller
+  via `requireUser(role?)` and reads the `role` (farmer | consumer) from Clerk
+  public metadata. No session → `401`; wrong role for a role-restricted
+  endpoint → `403`. Endpoints are annotated with their required role below
+  (*(farmer)*, *(consumer)*, or *(any role)*).
+  - **Local/CI bypass:** set `AUTH_DEV_BYPASS=1` (ignored when
+    `NODE_ENV=production`) to skip Clerk and take identity from the
+    `x-dev-user-id` / `x-dev-role` request headers. Never enable in production.
 - **Content type:** JSON everywhere except `POST /api/upload` (multipart).
 - **Errors:** uniform envelope
   ```json
@@ -223,7 +227,7 @@ Items bind to **real active listings**, so the cart is immediately orderable.
 `Order` = `{ id, consumerId, listingId, quantityKg, totalPrice, currency, status, createdAt }`
 
 > `/api/consumer/*` paths without a concrete handler still return `501`.
-
+>
 > **Phase 3b note:** `/api/ai/price` and `/api/ai/cart` use mock logic today
 > (`src/lib/ai/pricing.ts`). The LangGraph pricing/cart graphs (Shamba Records +
 > Gemini→Groq→OpenAI) replace the internals in Phase 3 behind these contracts.

@@ -8,7 +8,11 @@
 
 ## Overview
 
-Single Android app with dual roles (Farmer & Consumer) consuming a unified backend API. No web frontend; Next.js becomes API-only.
+Single Android app with dual roles (Farmer & Consumer) consuming a unified backend API.
+
+> ~~No web frontend; Next.js becomes API-only.~~ **Historical.** The project now
+> ships a Next.js **web** client alongside Android against the same API; the web
+> app is not stripped. See [`mvp.md`](./mvp.md).
 
 ## Architecture
 
@@ -41,7 +45,9 @@ Single Android app with dual roles (Farmer & Consumer) consuming a unified backe
 
 ## Backend Changes
 
-1. **Strip frontend** — remove `src/app/` (pages, components, layouts)
+1. ~~**Strip frontend** — remove `src/app/` (pages, components, layouts)~~
+   **Historical / do not apply.** `src/app/` is retained — the web client lives
+   there. See [`mvp.md`](./mvp.md).
 2. **Expose API routes** — `/api/auth`, `/api/farmer`, `/api/consumer`
 3. **Clerk integration** — set role/metadata on user sign-up (farmer vs consumer)
 4. **Image storage** — S3 or similar for produce uploads from Android
