@@ -1,29 +1,42 @@
-import type { Metadata } from "next";
-import Link from "next/link";
-import { Geist, Geist_Mono } from "next/font/google";
-import {
-  ClerkProvider,
-  Show,
-  SignInButton,
-  SignUpButton,
-  UserButton,
-} from "@clerk/nextjs";
+import type { Metadata, Viewport } from "next";
+import { Poppins, Geist_Mono } from "next/font/google";
+import { ClerkProvider } from "@clerk/nextjs";
+import { Toaster } from "@/components/ui/sonner";
+import { MotionProvider } from "@/components/shell/motion-provider";
 import "./globals.css";
 
-const geistSans = Geist({
-  variable: "--font-geist-sans",
+// Poppins is NOT a variable font on Google Fonts, so weights must be listed
+// explicitly. Three is the whole scale — every extra weight is another file.
+const poppins = Poppins({
+  variable: "--font-poppins",
   subsets: ["latin"],
+  weight: ["400", "500", "600"],
+  display: "swap",
 });
 
+// Retained solely for figures via the `figure` utility — Poppins' digits are
+// wide and non-tabular. Not the UI font.
 const geistMono = Geist_Mono({
   variable: "--font-geist-mono",
   subsets: ["latin"],
+  display: "swap",
 });
 
 export const metadata: Metadata = {
-  title: "Impact Lab",
+  // `%s` fills from each page's own title; the bare landing page uses `default`.
+  title: {
+    default: "Impact Lab — fair prices for farmers, cheaper food for everyone",
+    template: "%s · Impact Lab",
+  },
   description:
-    "AI-orchestrated food distribution: fair farmer logistics, store analytics, and low-cost grocery delivery.",
+    "A fair, fixed rate for farmers' produce and below-supermarket prices for shoppers — with AI doing the pricing and the ordering.",
+  applicationName: "Impact Lab",
+};
+
+export const viewport: Viewport = {
+  // Matches the light-only background so mobile browser chrome doesn't clash.
+  themeColor: "#ffffff",
+  colorScheme: "light",
 };
 
 export default function RootLayout({
@@ -35,28 +48,17 @@ export default function RootLayout({
     <ClerkProvider>
       <html
         lang="en"
-        className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
+        className={`${poppins.variable} ${geistMono.variable} h-full antialiased`}
       >
-        <body className="min-h-full flex flex-col bg-zinc-50 dark:bg-black">
-          <header className="flex items-center justify-between border-b border-black/[.08] px-6 py-4 dark:border-white/[.145]">
-            <Link href="/" className="font-semibold tracking-tight">
-              Impact&nbsp;Lab
-            </Link>
-            <nav className="flex items-center gap-3 text-sm">
-              <Show when="signed-out">
-                <SignInButton mode="modal" />
-                <SignUpButton mode="modal">
-                  <button className="rounded-full bg-foreground px-4 py-1.5 text-background">
-                    Sign up
-                  </button>
-                </SignUpButton>
-              </Show>
-              <Show when="signed-in">
-                <UserButton />
-              </Show>
-            </nav>
-          </header>
-          {children}
+        <body className="flex min-h-full flex-col bg-background text-foreground">
+          {/* No header here deliberately. Each surface renders its own
+              <SiteHeader surface="..."> — nesting one here as well would stack
+              two headers inside /farmer and /consumer, and the surface can't be
+              passed upward from a child layout. Auth pages get none. */}
+          <MotionProvider>
+            {children}
+            <Toaster position="top-center" />
+          </MotionProvider>
         </body>
       </html>
     </ClerkProvider>
