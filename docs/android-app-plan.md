@@ -12,7 +12,7 @@ Single Android app with dual roles (Farmer & Consumer) consuming a unified backe
 │  (Kotlin/Java)  │
 ├─────────────────┤
 │ Farmer Role     │ Produce upload, pricing, order mgmt
-│ Consumer Role   │ Browse, order, delivery tracking
+│ Consumer Role   │ Browse, order (delivery is mocked for MVP)
 └────────┬────────┘
          │ HTTP/REST
          ▼
@@ -22,7 +22,7 @@ Single Android app with dual roles (Farmer & Consumer) consuming a unified backe
 ├─────────────────────────┤
 │ /api/auth               │ Clerk + role assignment
 │ /api/farmer/*           │ Produce, pricing, orders
-│ /api/consumer/*         │ Browse, order, tracking
+│ /api/consumer/*         │ Browse, order
 │ /api/upload             │ Image handling
 └──────────┬──────────────┘
            │
@@ -46,7 +46,7 @@ Single Android app with dual roles (Farmer & Consumer) consuming a unified backe
 
 - **Login** → Clerk authentication → role check
 - **Farmer flow**: Dashboard (orders), Upload produce (camera), Manage pricing
-- **Consumer flow**: Browse produce, Cart, Checkout, Order tracking
+- **Consumer flow**: Browse produce, Cart, Checkout (delivery mocked)
 
 **Tech**: Kotlin, Android Studio, Retrofit/OkHttp for API calls, Glide for images.
 
