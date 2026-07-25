@@ -32,6 +32,23 @@ Two screens, one backend, real login. Delivery is mocked. AI does pricing and or
 
 ---
 
+## Screens (Web — Next.js 16)
+
+### Shared
+- **`/`** — landing: role picker "I'm a Farmer" / "I'm a Consumer" + sign-in CTA
+- **`/sign-in`**, **`/sign-up`** — Clerk auth (already scaffolded)
+
+### Farmer Flow
+1. **`/farmer`** — dashboard: active listings table + incoming orders list
+2. **`/farmer/new`** — new listing form: image upload, produce type, quantity → AI price suggestion → publish
+
+### Consumer Flow
+1. **`/consumer`** — home: produce card grid (photo, name, price, "vs. KES X at mall")
+2. **`/consumer/order`** — chat input ("I want sukuma for 4 people") → AI fills cart → review cart
+3. **`/consumer/order/confirm`** — order summary → place → success state (delivery mocked)
+
+---
+
 ## Backend API (Next.js 16, Bun)
 
 | Endpoint | What it does |
