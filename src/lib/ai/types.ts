@@ -115,6 +115,97 @@ export interface Conversation {
 }
 
 /* -------------------------------------------------------------------------- */
+/* Marketplace (mvp.md): users, listings, orders                              */
+/* -------------------------------------------------------------------------- */
+
+/** A platform user's role, set at Clerk sign-up. */
+export type UserRole = "farmer" | "consumer";
+
+/** Lifecycle of a consumer order. Delivery is mocked for the MVP. */
+export type OrderStatus = "placed" | "mocked_delivered";
+
+/** A farmer's produce listing as returned by the API. */
+export interface Listing {
+  id: string;
+  farmerId: string;
+  produceType: string;
+  /** Short-lived presigned GET URL for the produce photo, when one exists. */
+  imageUrl?: string;
+  quantityKg: number;
+  pricePerKg: number;
+  currency: string;
+  active: boolean;
+  createdAt: string;
+}
+
+/** Request body for creating a listing (JSON; image uploaded separately). */
+export interface CreateListingRequest {
+  produceType: string;
+  quantityKg: number;
+  /** Fair price per kg. If omitted, the server fills it via /api/ai/price. */
+  pricePerKg?: number;
+  /** MinIO object key from POST /api/upload. */
+  imageKey?: string;
+}
+
+/** A consumer order as returned by the API. */
+export interface Order {
+  id: string;
+  consumerId: string;
+  listingId: string;
+  quantityKg: number;
+  totalPrice: number;
+  currency: string;
+  status: OrderStatus;
+  createdAt: string;
+}
+
+export interface CreateOrderRequest {
+  listingId: string;
+  quantityKg: number;
+}
+
+/* -------------------------------------------------------------------------- */
+/* AI endpoints (mvp.md): /api/ai/price, /api/ai/cart                         */
+/* -------------------------------------------------------------------------- */
+
+export interface PriceRequest {
+  produceType: string;
+  /** County/market region, e.g. "Nairobi". */
+  region?: string;
+  quantityKg?: number;
+  /** Optional produce photo to inform grading (MinIO object key). */
+  imageKey?: string;
+}
+
+/** A single line in an AI-built cart, bound to a real listing. */
+export interface CartItem {
+  listingId: string;
+  produceType: string;
+  quantityKg: number;
+  pricePerKg: number;
+  lineTotal: number;
+}
+
+export interface CartRequest {
+  /** Natural-language order, e.g. "tomatoes and sukuma for 3 people". */
+  text: string;
+  language?: Language;
+}
+
+export interface CartResponse {
+  items: CartItem[];
+  total: number;
+  currency: string;
+  /** Comparison against typical supermarket/mall pricing, for the UI. */
+  mallComparison?: {
+    ourTotal: number;
+    mallTotal: number;
+    currency: string;
+  };
+}
+
+/* -------------------------------------------------------------------------- */
 /* Errors                                                                     */
 /* -------------------------------------------------------------------------- */
 

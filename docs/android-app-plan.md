@@ -1,5 +1,11 @@
 # Android App Integration Plan
 
+> **Superseded in part by [`mvp.md`](./mvp.md).** The dual-role, API-consuming
+> architecture below still holds, but the project now ships **both** a web
+> (Next.js) and an Android client against one shared API — Next.js is *not*
+> stripped to API-only. The canonical endpoint list lives in
+> [`api-contract.md`](./api-contract.md) (mvp.md surface), not the sketch here.
+
 ## Overview
 
 Single Android app with dual roles (Farmer & Consumer) consuming a unified backend API. No web frontend; Next.js becomes API-only.
