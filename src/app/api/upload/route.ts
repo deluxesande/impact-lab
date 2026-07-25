@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { requireFarmer, AuthError } from "@/lib/auth/require-farmer";
+import { buildObjectKey, putImage } from "@/lib/storage/minio";
 import type { UploadResponse, ApiError } from "@/lib/ai/types";
 
 /**
@@ -7,10 +8,12 @@ import type { UploadResponse, ApiError } from "@/lib/ai/types";
  *
  * Contract (see docs/api-contract.md and docs/android-app-plan.md):
  *   Request:  multipart/form-data { file: <image>, sessionId: string }
- *   Response: { objectKey: string }   // stable MinIO key, never a public URL
+ *   Response: { objectKey: string }   // private MinIO key, never a public URL
  *
- * PHASE 1 STATUS: STUBBED. Validates the multipart shape and returns a mock
- * objectKey. Real MinIO storage (private bucket) lands in Phase 2.5.
+ * PHASE 2.5 STATUS: REAL. The file is streamed into a private MinIO bucket and
+ * the returned key is durable — pass it to POST /api/farmer/agent as
+ * `imageKey`. Images are never served by a permanent public URL; conversation
+ * reads mint short-lived presigned GET URLs instead.
  */
 
 const MAX_BYTES = 10 * 1024 * 1024; // 10 MB
@@ -68,10 +71,9 @@ export async function POST(request: Request): Promise<NextResponse<UploadRespons
       );
     }
 
-    // TODO(Phase 2.5): stream the file to the private MinIO bucket and use the
-    // returned key. For now, mint a deterministic-looking mock key.
-    const ext = file.type.split("/")[1] ?? "bin";
-    const objectKey = `produce/${sessionId}/${Date.now()}-mock.${ext}`;
+    const body = Buffer.from(await file.arrayBuffer());
+    const objectKey = buildObjectKey(sessionId, file.type);
+    await putImage(objectKey, body, file.type);
 
     return NextResponse.json({ objectKey }, { status: 201 });
   } catch (err) {

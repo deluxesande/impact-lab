@@ -7,6 +7,7 @@ import type {
   PricingData,
 } from "@/lib/ai/types";
 
+
 /**
  * Data access for the farmer surface.
  *
@@ -73,8 +74,22 @@ export async function getOrCreateConversation(
   return row;
 }
 
+/**
+ * A conversation as stored.
+ *
+ * Deliberately carries the raw private `imageKey` rather than the API's
+ * `imageUrl`: minting a presigned URL is a storage concern, not a database
+ * one, so the route layer does that translation. Keeps this module free of
+ * any MinIO dependency.
+ */
+export interface ConversationRecord extends Omit<Conversation, "messages"> {
+  messages: (Omit<ConversationMessage, "imageUrl"> & { imageKey?: string })[];
+}
+
 /** Fetch a conversation with its messages in chronological order. */
-export async function getConversation(id: string): Promise<Conversation | null> {
+export async function getConversation(
+  id: string,
+): Promise<ConversationRecord | null> {
   const sql = getSql();
 
   const [conversation] = await sql<ConversationRow[]>`
@@ -91,21 +106,18 @@ export async function getConversation(id: string): Promise<Conversation | null> 
     ORDER BY created_at ASC
   `;
 
-  const messages: ConversationMessage[] = rows.map((r) => ({
-    id: r.id,
-    role: r.role,
-    content: r.content,
-    // TODO(Phase 2.5): mint a short-lived presigned GET URL from image_key.
-    ...(r.image_key ? { imageUrl: r.image_key } : {}),
-    ...(r.data ? { data: r.data } : {}),
-    createdAt: r.created_at.toISOString(),
-  }));
-
   return {
     id: conversation.id,
     sessionId: conversation.session_id,
     language: conversation.language,
-    messages,
+    messages: rows.map((r) => ({
+      id: r.id,
+      role: r.role,
+      content: r.content,
+      ...(r.image_key ? { imageKey: r.image_key } : {}),
+      ...(r.data ? { data: r.data } : {}),
+      createdAt: r.created_at.toISOString(),
+    })),
   };
 }
 
