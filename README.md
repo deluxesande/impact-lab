@@ -1,36 +1,82 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Impact Lab
+
+AI-orchestrated food distribution platform connecting farmers, stores, and
+consumers into one supply chain. Three surfaces:
+
+- **Farmer logistics** — fixed, transparent rates and reliable farm→city transport.
+- **Store analytics** — per-city/produce market metrics for vendors.
+- **Grocery delivery** — Uber-Eats-style consumer app at below-supermarket prices.
+
+AI strategy: orchestrate existing hosted/free models — no custom model training.
+
+## Stack
+
+- [Next.js 16](https://nextjs.org) (App Router, `src/`, TypeScript)
+- [Bun](https://bun.sh) — runtime & package manager
+- [Tailwind CSS v4](https://tailwindcss.com)
+- [Clerk](https://clerk.com) — authentication
 
 ## Getting Started
 
-First, run the development server:
+### 1. Install dependencies
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+bun install
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+### 2. Configure Clerk
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+Create an application at the [Clerk dashboard](https://dashboard.clerk.com),
+then copy the example env file and fill in your keys:
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+```bash
+cp .env.example .env.local
+```
 
-## Learn More
+```env
+NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_test_...
+CLERK_SECRET_KEY=sk_test_...
+```
 
-To learn more about Next.js, take a look at the following resources:
+`.env.local` is gitignored — never commit real keys, and never expose
+`CLERK_SECRET_KEY` to client code.
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+### 3. Run the dev server
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+```bash
+bun run dev
+```
 
-## Deploy on Vercel
+Open [http://localhost:3000](http://localhost:3000).
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+## Scripts
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+```bash
+bun run dev     # start dev server
+bun run build   # production build
+bun run start   # serve production build
+bun run lint    # eslint
+```
+
+## Project structure
+
+```
+src/
+  proxy.ts                        # Clerk middleware (Next 16 renamed middleware.ts → proxy.ts)
+  app/
+    layout.tsx                    # ClerkProvider + header (auth controls)
+    page.tsx                      # landing page
+    sign-in/[[...sign-in]]/       # Clerk sign-in
+    sign-up/[[...sign-up]]/       # Clerk sign-up
+```
+
+## Notes for contributors & CLI agents
+
+Conventions, Next 16 gotchas, Clerk rules, and required tooling (Context7,
+`vibesec`, `impeccable`) are documented in [`AGENTS.md`](./AGENTS.md).
+
+Two version-specific gotchas to know up front:
+
+- Middleware lives in `src/proxy.ts`, **not** `middleware.ts` (Next 16 rename).
+- Auth visibility uses `<Show when="signed-in" | "signed-out">` — Clerk 7 dropped
+  `<SignedIn>` / `<SignedOut>`.
