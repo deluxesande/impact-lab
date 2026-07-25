@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { requireFarmer, AuthError } from "@/lib/auth/require-farmer";
+import { getConversation } from "@/lib/db/repo";
 import type { Conversation, ApiError } from "@/lib/ai/types";
 
 /**
@@ -9,12 +10,18 @@ import type { Conversation, ApiError } from "@/lib/ai/types";
  *   Response: { id, sessionId, language, messages: [...] }
  *   Any `imageUrl` values are short-lived presigned GET URLs minted per request.
  *
- * PHASE 1 STATUS: STUBBED. Returns a mock conversation so the Android team can
- * build the chat history view. Real reads from Postgres (conversations +
- * messages) and MinIO presigning land in Phases 2 and 2.5.
+ * PHASE 2 STATUS: reads real rows from Postgres (conversations + messages),
+ * ordered chronologically. Unknown ids now return 404 instead of a fabricated
+ * conversation.
+ *
+ * Still pending: `imageUrl` currently echoes the stored private object key.
+ * Phase 2.5 swaps that for a short-lived presigned MinIO GET URL.
  *
  * Next.js 16: dynamic route `params` is async and must be awaited.
  */
+
+const UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 export async function GET(
   _request: Request,
@@ -30,40 +37,25 @@ export async function GET(
         { status: 400 },
       );
     }
+    // The column is uuid; a malformed id would make Postgres raise rather than
+    // return no rows, so treat "not a uuid" as "no such conversation".
+    if (!UUID_RE.test(id)) {
+      return NextResponse.json(
+        { error: { code: "not_found", message: "Conversation not found." } },
+        { status: 404 },
+      );
+    }
 
-    // TODO(Phase 2): load the conversation + messages from Postgres.
     // TODO(Phase 2.5): mint presigned GET URLs for any image object keys.
-    const mock: Conversation = {
-      id,
-      sessionId: "session-mock",
-      language: "en",
-      messages: [
-        {
-          id: "msg-1",
-          role: "user",
-          content: "I have 200kg of maize, harvested this week. What is it worth?",
-          createdAt: "2026-07-25T09:00:00.000Z",
-        },
-        {
-          id: "msg-2",
-          role: "assistant",
-          content:
-            "A fair rate for your maize is about KES 50 per kg based on recent " +
-            "Gikomba Market data. Prices are trending up this week.",
-          data: {
-            produce: "Maize",
-            pricePerKg: 50,
-            unit: "90kg bag",
-            currency: "KES",
-            market: "Gikomba Market",
-            trend: "up",
-          },
-          createdAt: "2026-07-25T09:00:03.000Z",
-        },
-      ],
-    };
+    const conversation = await getConversation(id);
+    if (!conversation) {
+      return NextResponse.json(
+        { error: { code: "not_found", message: "Conversation not found." } },
+        { status: 404 },
+      );
+    }
 
-    return NextResponse.json(mock, { status: 200 });
+    return NextResponse.json(conversation, { status: 200 });
   } catch (err) {
     if (err instanceof AuthError) {
       const status = err.code === "unauthorized" ? 401 : 403;

@@ -26,6 +26,11 @@ TypeScript types backing this contract live in
   ```json
   { "error": { "code": "string", "message": "string" } }
   ```
+- **Persistence:** conversations and messages are stored in Postgres. A
+  conversation is keyed by `sessionId` (one thread per session), so repeat
+  agent calls append turns rather than starting over. If the database is
+  unreachable the request fails with `500` — replies are never returned
+  unpersisted.
 - **Images:** never returned as permanent public URLs. Uploads yield a private
   MinIO `objectKey`; history reads return **short-lived presigned GET URLs**.
 
@@ -114,10 +119,14 @@ The farmer AI co-pilot. A supervisor routes the message to a **pricing** or
 **Errors:** `400` invalid/missing body, unsupported `language` ·
 `401/403` auth (Phase 4) · `500`.
 
-> **Phase 1 note:** intent is decided by a keyword heuristic and replies are
-> mock data. Real Shamba-Records-backed pricing and LLM advisory land in Phase 3.
-> `language` **is** validated and honored — `"sw"` returns Swahili mock copy —
-> but the underlying content is still canned, not model-generated.
+> **Phase 2 note:** the exchange is now **persisted**. `conversationId` is a
+> real, re-fetchable row — pass it to `GET /api/farmer/conversations/:id`.
+> Repeat calls with the same `sessionId` **append to the same conversation**.
+>
+> The reply text is still mock: intent comes from a keyword heuristic and the
+> copy is canned. `language` **is** validated and honored (`"sw"` returns
+> Swahili copy). Real Shamba-Records-backed pricing and LLM advisory land in
+> Phase 3.
 
 ---
 
@@ -152,7 +161,13 @@ Fetch a conversation with its message history.
 
 - `imageUrl` (when present on a message) is a **short-lived presigned GET URL**.
 
-**Errors:** `400` missing id · `401/403` auth (Phase 4) · `500`.
+**Errors:** `400` missing id · `404` unknown conversation ·
+`401/403` auth (Phase 4) · `500`.
+
+> **Phase 2 note:** this now reads **real rows from Postgres**, ordered
+> chronologically. Unknown or malformed ids return `404`. One caveat:
+> `imageUrl` currently echoes the stored private object key — it becomes a real
+> short-lived presigned MinIO URL in Phase 2.5.
 
 ---
 
@@ -170,10 +185,19 @@ the same `501` error envelope, for `GET`, `POST`, `PUT`, `PATCH`, and `DELETE`.
 
 ## Roadmap behind this contract
 
-| Phase | Adds                                                                 |
-| ----- | ------------------------------------------------------------------- |
-| 1     | **These stub endpoints** (mock responses) — unblock Android         |
-| 2     | Postgres (Docker): `conversations`, `messages`, `agent_runs`        |
-| 2.5   | MinIO (Docker): real `POST /api/upload`, presigned GET for history  |
-| 3     | LangGraph supervisor → pricing/advisory; Shamba Records; model fallback |
-| 4     | Clerk token verification + `role=farmer` gate                       |
+| Phase | Adds                                                                 | Status |
+| ----- | ------------------------------------------------------------------- | ------ |
+| 1     | Stub endpoints (mock responses) — unblock Android                   | ✅ done |
+| 2     | Postgres (Docker): `conversations`, `messages`, `agent_runs`        | ✅ done |
+| 2.5   | MinIO (Docker): real `POST /api/upload`, presigned GET for history  | next   |
+| 3     | LangGraph supervisor → pricing/advisory; Shamba Records; model fallback | |
+| 4     | Clerk token verification + `role=farmer` gate                       | |
+
+## Running the backend locally
+
+```bash
+cp .env.example .env.local   # fill in Clerk keys
+docker compose up -d         # Postgres (+ MinIO, for Phase 2.5)
+bun run db:migrate           # apply schema.sql (idempotent)
+bun run dev
+```
