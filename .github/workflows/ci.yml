@@ -2,6 +2,7 @@ name: CI
 
 on:
   push:
+    branches: [main]
   pull_request:
     branches: [main]
 
@@ -9,8 +10,10 @@ on:
 permissions:
   contents: read
 
-# A new push to the same ref supersedes in-flight runs. Without this, the
-# `push` + `pull_request` pair below would leave stale duplicate runs queued.
+# Cancels in-flight runs superseded by a newer run for the same ref — e.g.
+# consecutive pushes to a PR branch. This does NOT collapse the push/
+# pull_request pair: a PR run's `github.ref` is refs/pull/N/merge while the
+# branch push is refs/heads/..., so they occupy different groups.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
@@ -25,8 +28,12 @@ jobs:
     timeout-minutes: 15
 
     steps:
+      # No step here pushes, so don't leave the GITHUB_TOKEN in .git/config
+      # where a later step or dependency install script could read it.
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       # Package manager is Bun: bun.lock is the only lockfile in the repo and
       # AGENTS.md mandates Bun. Pinned rather than `latest` so CI is
