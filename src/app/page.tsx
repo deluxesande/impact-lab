@@ -64,7 +64,7 @@ export default async function Home({
           </h1>
 
           <p className="mt-5 max-w-xl text-lg leading-relaxed text-muted-foreground">
-            Impact Lab gives farmers a fair, fixed rate for their produce and
+            Farmers gives growers a fair, fixed rate for their produce and
             sells it straight to consumers below supermarket prices — with AI
             doing the pricing and the ordering.
           </p>
@@ -75,7 +75,7 @@ export default async function Home({
               className="mt-8 flex items-start gap-2.5 rounded-xl border border-border bg-primary-tint px-4 py-3 text-sm text-foreground"
             >
               <CheckCircle size={18} className="mt-px shrink-0 text-primary" aria-hidden />
-              You’re signed in — choose how you’ll use Impact Lab to continue.
+              You’re signed in — choose how you’ll use Farmers to continue.
             </p>
           ) : null}
 

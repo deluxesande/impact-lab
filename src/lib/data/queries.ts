@@ -2,6 +2,7 @@ import {
   getListing,
   listActiveListings,
   listFarmerListings,
+  listOrdersForConsumer,
   listOrdersForFarmer,
 } from "@/lib/db/repo";
 import { presentListings } from "@/lib/api/present-listing";
@@ -51,6 +52,17 @@ export async function farmerListingViews(farmerId: string): Promise<ListingView[
 export async function farmerOrderViews(farmerId: string): Promise<OrderView[]> {
   const orders = await listOrdersForFarmer(farmerId);
   return withProduceNames(orders);
+}
+
+/**
+ * A consumer's own order history.
+ *
+ * Without this the write path was invisible: the basket clears on checkout and the
+ * confirmation screen is transient, so a shopper had no evidence their order had
+ * been recorded.
+ */
+export async function consumerOrderViews(consumerId: string): Promise<OrderView[]> {
+  return withProduceNames(await listOrdersForConsumer(consumerId));
 }
 
 /** Resolve produce names for a set of orders, de-duplicating listing lookups. */

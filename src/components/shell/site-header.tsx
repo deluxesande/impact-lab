@@ -35,7 +35,7 @@ export function SiteHeader({ surface = "public" }: { surface?: Surface }) {
           >
             <Leaf size={16} weight="Filled" />
           </span>
-          Impact&nbsp;Lab
+          Farmers
         </Link>
 
         <div className="ml-2 hidden md:block">
