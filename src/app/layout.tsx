@@ -50,7 +50,23 @@ export default function RootLayout({
         lang="en"
         className={`${poppins.variable} ${geistMono.variable} h-full antialiased`}
       >
-        <body className="flex min-h-full flex-col bg-background text-foreground">
+        {/*
+          `suppressHydrationWarning` here is for **browser extensions**, not for
+          any nondeterminism of ours. Grammarly (and similar) inject attributes —
+          `data-gr-ext-installed`, `data-new-gr-c-s-check-loaded` — onto <body>
+          before React hydrates, which React then reports as a mismatch. Nothing
+          in the app can fix that; it happens in the user's browser.
+
+          Scope is deliberately narrow: React applies this to **this element's own
+          attributes and text only, one level deep** — it does not suppress
+          anything in the tree below. So a genuine hydration bug in a page or
+          component still surfaces normally. Do not move it to <html> or a
+          component to quieten a warning; fix the cause instead.
+        */}
+        <body
+          suppressHydrationWarning
+          className="flex min-h-full flex-col bg-background text-foreground"
+        >
           {/* No header here deliberately. Each surface renders its own
               <SiteHeader surface="..."> — nesting one here as well would stack
               two headers inside /farmer and /consumer, and the surface can't be
