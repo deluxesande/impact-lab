@@ -30,7 +30,7 @@ export const metadata: Metadata = {
   },
   description:
     "A fair, fixed rate for farmers' produce and below-supermarket prices for shoppers — with AI doing the pricing and the ordering.",
-  applicationName: "Farmers",
+  applicationName: "Only Farms",
 };
 
 export const viewport: Viewport = {
