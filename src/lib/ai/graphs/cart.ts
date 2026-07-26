@@ -1,7 +1,7 @@
 import { SystemMessage, HumanMessage } from "@langchain/core/messages";
 import { CartExtractionSchema } from "@/lib/ai/schemas";
 import { invokeStructured, hasModelProvider } from "@/lib/ai/models";
-import { normalizeProduce } from "@/lib/ai/pricing";
+import { normalizeProduce, canonicalProduce } from "@/lib/ai/pricing";
 import type { ListingRecord } from "@/lib/db/repo";
 import type { CartItem, CartResponse } from "@/lib/ai/types";
 
@@ -23,7 +23,7 @@ export interface CartGraphResult {
   model?: string;
 }
 
-function buildResponse(items: CartItem[]): CartResponse {
+export function buildResponse(items: CartItem[]): CartResponse {
   const total = Math.round(items.reduce((s, i) => s + i.lineTotal, 0) * 100) / 100;
   return {
     items,
@@ -38,7 +38,7 @@ function buildResponse(items: CartItem[]): CartResponse {
 }
 
 /** Choose the cheapest active listing per produce and size the line. */
-function assembleCart(
+export function assembleCart(
   wants: { produce: string; quantityKg: number }[],
   listings: ListingRecord[],
 ): CartItem[] {
@@ -46,21 +46,19 @@ function assembleCart(
   const seen = new Set<string>();
 
   for (const want of wants) {
-    const key = normalizeProduce(want.produce);
-    if (seen.has(key)) continue;
+    // Resolve both sides to a canonical produce key so singular/plural/alias
+    // variants match ("tomato" ↔ "Tomatoes" ↔ "tomatoes"). Dedup on it too.
+    const wantKey = canonicalProduce(want.produce);
+    if (seen.has(wantKey)) continue;
 
-    const candidates = listings.filter((l) => {
-      const lk = normalizeProduce(l.produceType);
-      const stem = lk.endsWith("s") ? lk.slice(0, -1) : lk;
-      return key === lk || key === stem || key.startsWith(stem);
-    });
+    const candidates = listings.filter((l) => canonicalProduce(l.produceType) === wantKey);
     if (candidates.length === 0) continue;
 
     const cheapest = candidates.reduce((a, b) => (b.pricePerKg < a.pricePerKg ? b : a));
     const quantityKg = Math.min(Math.max(want.quantityKg, 0), cheapest.quantityKg);
     if (quantityKg <= 0) continue;
 
-    seen.add(key);
+    seen.add(wantKey);
     items.push({
       listingId: cheapest.id,
       produceType: cheapest.produceType,
@@ -73,7 +71,7 @@ function assembleCart(
 }
 
 /** Fallback: whole-word keyword match with a default serving size. */
-function heuristicCart(text: string, listings: ListingRecord[]): CartItem[] {
+export function heuristicCart(text: string, listings: ListingRecord[]): CartItem[] {
   const norm = normalizeProduce(text);
   const wants = listings.map((l) => {
     const lk = normalizeProduce(l.produceType);

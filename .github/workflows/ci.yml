@@ -68,8 +68,11 @@ jobs:
       - name: Typecheck
         run: bunx tsc --noEmit
 
-      # No unit tests step: the repo has no test runner and no test files.
-      # Add one here once a `test` script exists.
+      # Unit tests via the built-in Bun test runner (no extra deps). Covers the
+      # AI layer's pure logic: timeouts, produce canonicalization, cart
+      # assembly, and Shamba HMAC signing.
+      - name: Test
+        run: bun test
 
       # Speeds up rebuilds; keyed on sources so it invalidates when they change.
       - name: Cache Next.js build cache

@@ -45,5 +45,11 @@ export const IntentSchema = z.object({
     .describe(
       "pricing = the farmer wants a price/valuation for produce; advisory = a farming question or general advice",
     ),
+  produce: z
+    .string()
+    .nullable()
+    .describe(
+      "For pricing intent, the produce being priced (singular, lowercase, e.g. 'tomato', 'maize'); null if none or advisory",
+    ),
 });
 export type IntentResult = z.infer<typeof IntentSchema>;

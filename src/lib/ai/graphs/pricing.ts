@@ -55,13 +55,18 @@ export async function runPricingGraph(req: PriceRequest): Promise<PricingGraphRe
     return { data: heuristic, source: "heuristic", toolCalls };
   }
 
-  // 1 + 2: gather market context from Shamba, if configured.
+  // 1 + 2: gather market context from Shamba, if configured. Treated as
+  // best-effort ENRICHMENT — any failure (rate limit, no UUID, timeout) simply
+  // leaves marketLines empty and the LLM reasons from general knowledge.
   let marketLines: string[] = [];
   if (isShambaConfigured()) {
     try {
       const products = await searchProducts(req.produceType);
       toolCalls.push({ tool: "searchProducts", query: req.produceType, count: products.length });
-      const match = products[0];
+
+      // The API's product search does not always return a UUID; without one we
+      // cannot fetch prices, so skip that call rather than sending [undefined].
+      const match = products.find((p) => typeof p.uuid === "string" && p.uuid.length > 0);
       if (match) {
         const prices = await getLatestPrices([match.uuid], undefined, 5);
         toolCalls.push({ tool: "getLatestPrices", product: match.name, count: prices.length });
@@ -69,11 +74,15 @@ export async function runPricingGraph(req: PriceRequest): Promise<PricingGraphRe
           .map((p) => {
             const perKg = toPerKg(p);
             const where = p.market?.name ?? p.county?.name ?? "market";
+            const name = p.product?.name ?? match.name;
+            const when = p.recorded_at ? p.recorded_at.slice(0, 10) : "recent";
             return perKg
-              ? `${p.product.name} at ${where}: ~KES ${perKg.toFixed(1)}/kg (${p.unit}), ${p.recorded_at.slice(0, 10)}`
-              : `${p.product.name} at ${where}: KES ${p.price} per ${p.unit}, ${p.recorded_at.slice(0, 10)}`;
+              ? `${name} at ${where}: ~KES ${perKg.toFixed(1)}/kg (${p.unit}), ${when}`
+              : `${name} at ${where}: KES ${p.price} per ${p.unit}, ${when}`;
           })
           .filter(Boolean);
+      } else if (products.length > 0) {
+        toolCalls.push({ tool: "getLatestPrices", skipped: "no product uuid in search results" });
       }
     } catch (err) {
       toolCalls.push({ tool: "shamba", error: String(err).slice(0, 160) });

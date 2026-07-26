@@ -1,4 +1,5 @@
 import { createHmac } from "node:crypto";
+import { AI_TIMEOUTS } from "./timeout";
 
 /**
  * Shamba Records API client (server-only).
@@ -48,6 +49,25 @@ export function isShambaConfigured(): boolean {
   return Boolean(process.env.SHAMBA_API_KEY && process.env.SHAMBA_API_SECRET);
 }
 
+/**
+ * Build the exact string that gets HMAC-signed.
+ * Exported for unit testing against the documented reference format.
+ */
+export function buildSignatureString(
+  method: string,
+  path: string,
+  query: string,
+  timestamp: string,
+  body: string,
+): string {
+  return [method.toUpperCase(), path, query, timestamp, body].join("\n");
+}
+
+/** Compute the hex HMAC-SHA256 signature for a given signature string. */
+export function computeSignature(secret: string, signatureString: string): string {
+  return createHmac("sha256", secret).update(signatureString).digest("hex");
+}
+
 function sign(
   secret: string,
   method: string,
@@ -56,8 +76,8 @@ function sign(
   body: string,
 ): { signature: string; timestamp: string } {
   const timestamp = Math.floor(Date.now() / 1000).toString();
-  const signatureString = [method.toUpperCase(), path, query, timestamp, body].join("\n");
-  const signature = createHmac("sha256", secret).update(signatureString).digest("hex");
+  const signatureString = buildSignatureString(method, path, query, timestamp, body);
+  const signature = computeSignature(secret, signatureString);
   return { signature, timestamp };
 }
 
@@ -80,16 +100,32 @@ async function request<T>(
   const { signature, timestamp } = sign(secret, method, path, queryString, bodyString);
 
   const url = `${baseUrl}${path}${queryString ? `?${queryString}` : ""}`;
-  const res = await fetch(url, {
-    method,
-    headers: {
-      "X-API-Key": apiKey,
-      "X-Signature": signature,
-      "X-Signature-Timestamp": timestamp,
-      "Content-Type": "application/json",
-    },
-    ...(bodyString ? { body: bodyString } : {}),
-  });
+
+  // Abort the request if it exceeds the Shamba budget, so a slow upstream can't
+  // stall the pricing graph — it falls through to the LLM/heuristic instead.
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), AI_TIMEOUTS.shamba);
+  let res: Response;
+  try {
+    res = await fetch(url, {
+      method,
+      headers: {
+        "X-API-Key": apiKey,
+        "X-Signature": signature,
+        "X-Signature-Timestamp": timestamp,
+        "Content-Type": "application/json",
+      },
+      signal: controller.signal,
+      ...(bodyString ? { body: bodyString } : {}),
+    });
+  } catch (err) {
+    if (err instanceof Error && err.name === "AbortError") {
+      throw new ShambaApiError(0, `Shamba ${method} ${path} timed out after ${AI_TIMEOUTS.shamba}ms`);
+    }
+    throw err;
+  } finally {
+    clearTimeout(timer);
+  }
 
   if (!res.ok) {
     const text = await res.text().catch(() => "");
