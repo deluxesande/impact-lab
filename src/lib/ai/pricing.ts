@@ -42,7 +42,7 @@ export function recommendPrice(req: PriceRequest): PricingData {
   const key = PRODUCE_ALIASES[normalized] ?? normalized;
   const match = MOCK_RATES[key] ?? DEFAULT_RATE;
   return {
-    produce: req.produceType.trim(),
+    produce: key,
     pricePerKg: match.pricePerKg,
     unit: "kg",
     currency: "KES",
