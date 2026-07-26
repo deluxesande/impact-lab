@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { AllModelsFailedError } from "./models";
+import { AllModelsFailedError } from "@/lib/ai/models";
 
 describe("AllModelsFailedError", () => {
   test("summarises every provider failure in the message", () => {
@@ -28,7 +28,7 @@ describe("AllModelsFailedError", () => {
  */
 describe("hasModelProvider", () => {
   test("is a boolean reflecting configured providers", async () => {
-    const { hasModelProvider } = await import("./models");
+    const { hasModelProvider } = await import("@/lib/ai/models");
     expect(typeof hasModelProvider()).toBe("boolean");
   });
 });

@@ -4,7 +4,7 @@ import { ChatOpenAI } from "@langchain/openai";
 import type { BaseChatModel } from "@langchain/core/language_models/chat_models";
 import { HumanMessage, type BaseMessageLike } from "@langchain/core/messages";
 import type { z } from "zod";
-import { withTimeout, AI_TIMEOUTS } from "./timeout";
+import { withTimeout, AI_TIMEOUTS, TimeoutError } from "@/lib/ai/timeout";
 
 /**
  * Model provider setup and the fallback chain.
@@ -86,6 +86,13 @@ export function hasModelProvider(): boolean {
   return buildProviders().length > 0;
 }
 
+/** Only timeout and parse/validation errors are worth retrying once. */
+function isRetryableError(err: unknown): boolean {
+  if (err instanceof TimeoutError) return true;
+  const msg = String(err).toLowerCase();
+  return msg.includes("parse") || msg.includes("schema");
+}
+
 export interface StructuredResult<T> {
   data: T;
   /** Which provider produced the result. */
@@ -127,7 +134,7 @@ export async function invokeStructured<T>(
 
     // One reprompt on failure: structured-output parse errors are often fixed by
     // an explicit nudge, and a transient timeout may not recur. Only then do we
-    // move to the next provider.
+    // move to the next provider. Auth/config errors are never retryable.
     let lastError: unknown;
     for (let attempt = 0; attempt < 2; attempt++) {
       try {
@@ -140,14 +147,17 @@ export async function invokeStructured<T>(
                   "Your previous response was invalid. Return ONLY a value that matches the required schema.",
                 ),
               ];
+        const controller = new AbortController();
         const data = (await withTimeout(
-          structured.invoke(msgs, config),
+          structured.invoke(msgs, { ...config, signal: controller.signal }),
           timeoutMs,
           `model:${provider.name}`,
+          controller,
         )) as T;
         return { data, provider: provider.name };
       } catch (error) {
         lastError = error;
+        if (!isRetryableError(error)) break;
       }
     }
     errors.push({ provider: provider.name, error: lastError });
@@ -167,13 +177,16 @@ export async function invokeText(
   const errors: { provider: ProviderName; error: unknown }[] = [];
   for (const provider of providers) {
     try {
+      const controller = new AbortController();
       const res = await withTimeout(
         provider.model.invoke(messages, {
           runName: opts.runName,
           tags: [...(opts.tags ?? []), `provider:${provider.name}`],
+          signal: controller.signal,
         }),
         timeoutMs,
         `model:${provider.name}`,
+        controller,
       );
       const text = typeof res.content === "string" ? res.content : JSON.stringify(res.content);
       return { text, provider: provider.name };

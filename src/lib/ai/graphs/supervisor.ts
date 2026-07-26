@@ -2,6 +2,7 @@ import { SystemMessage, HumanMessage } from "@langchain/core/messages";
 import { IntentSchema } from "@/lib/ai/schemas";
 import { invokeStructured, invokeText, hasModelProvider } from "@/lib/ai/models";
 import { runPricingGraph } from "@/lib/ai/graphs/pricing";
+import { canonicalProduce } from "@/lib/ai/pricing";
 import type { FarmerAgentReply, Language, PricingData } from "@/lib/ai/types";
 
 /**
@@ -101,7 +102,8 @@ export async function runSupervisor(
   if (intent === "pricing") {
     // Prefer the LLM-extracted produce; fall back to a keyword scan of the
     // message, then the raw message as a last resort.
-    const produceType = produce?.trim() || produceFrom(message);
+    const canonical = produce?.trim() ? canonicalProduce(produce.trim()) : null;
+    const produceType = canonical || produceFrom(message);
     const priced = await runPricingGraph({ produceType });
     toolCalls.push(...priced.toolCalls);
     const data: PricingData = priced.data;

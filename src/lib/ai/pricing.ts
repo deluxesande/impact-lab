@@ -45,10 +45,10 @@ export function normalizeProduce(name: string): string {
  */
 export function canonicalProduce(name: string): string {
   const normalized = normalizeProduce(name);
-  if (PRODUCE_ALIASES[normalized]) return PRODUCE_ALIASES[normalized];
+  if (Object.hasOwn(PRODUCE_ALIASES, normalized)) return PRODUCE_ALIASES[normalized];
   // Regular plural fallback ("mangoes" → "mango" won't work, but "beans" → "bean").
   const stem = normalized.endsWith("s") ? normalized.slice(0, -1) : normalized;
-  return PRODUCE_ALIASES[stem] ?? stem;
+  return Object.hasOwn(PRODUCE_ALIASES, stem) ? PRODUCE_ALIASES[stem] : stem;
 }
 
 /** Recommend a fair price for a produce type. */

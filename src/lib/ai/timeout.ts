@@ -18,8 +18,8 @@ export class TimeoutError extends Error {
 export const AI_TIMEOUTS = {
   model: Number(process.env.AI_MODEL_TIMEOUT_MS ?? 8000),
   shamba: Number(process.env.AI_SHAMBA_TIMEOUT_MS ?? 5000),
-  /** Whole-agent budget, enforced by the route/supervisor. */
-  agent: Number(process.env.AI_AGENT_TIMEOUT_MS ?? 15000),
+  /** Whole-agent budget, enforced by the route/supervisor. Exceeds worst-case serialized pricing + provider-retry paths. */
+  agent: Number(process.env.AI_AGENT_TIMEOUT_MS ?? 30000),
 } as const;
 
 /**
