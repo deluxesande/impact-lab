@@ -130,10 +130,25 @@ async function request<T>(
 
   try {
     if (!res.ok) {
-      const text = await res.text().catch(() => "");
+      let text: string;
+      try {
+        text = await res.text();
+      } catch (err) {
+        if (err instanceof Error && err.name === "AbortError") {
+          throw new ShambaApiError(0, `Shamba ${method} ${path} timed out after ${AI_TIMEOUTS.shamba}ms`);
+        }
+        throw err;
+      }
       throw new ShambaApiError(res.status, `Shamba ${method} ${path} -> ${res.status}: ${text.slice(0, 200)}`);
     }
-    return (await res.json()) as T;
+    try {
+      return (await res.json()) as T;
+    } catch (err) {
+      if (err instanceof Error && err.name === "AbortError") {
+        throw new ShambaApiError(0, `Shamba ${method} ${path} timed out after ${AI_TIMEOUTS.shamba}ms`);
+      }
+      throw err;
+    }
   } finally {
     clearTimeout(timer);
   }
