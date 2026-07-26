@@ -25,12 +25,12 @@ const geistMono = Geist_Mono({
 export const metadata: Metadata = {
   // `%s` fills from each page's own title; the bare landing page uses `default`.
   title: {
-    default: "Impact Lab — fair prices for farmers, cheaper food for everyone",
-    template: "%s · Impact Lab",
+    default: "Farmers — fair prices for farmers, cheaper food for everyone",
+    template: "%s · Farmers",
   },
   description:
     "A fair, fixed rate for farmers' produce and below-supermarket prices for shoppers — with AI doing the pricing and the ordering.",
-  applicationName: "Impact Lab",
+  applicationName: "Farmers",
 };
 
 export const viewport: Viewport = {

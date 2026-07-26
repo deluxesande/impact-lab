@@ -27,7 +27,7 @@ export default function NotFound() {
           </h1>
           <p className="mt-1.5 text-sm leading-relaxed text-muted-foreground">
             The link may be out of date. Start from the beginning and pick how
-            you’re using Impact Lab.
+            you’re using Farmers.
           </p>
 
           <Button asChild className="mt-5">

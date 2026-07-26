@@ -21,7 +21,7 @@ import { ToastDemo, TabsDemo } from "./interactive";
  * Delete before the demo, or keep as a team reference.
  */
 export const metadata: Metadata = {
-  title: "Preview — Impact Lab design system",
+  title: "Preview — Farmers design system",
   robots: { index: false, follow: false },
 };
 
@@ -92,7 +92,7 @@ export default function PreviewPage() {
         <div className="py-12">
           <p className="text-sm font-medium text-primary">Design system</p>
           <h1 className="mt-2 text-4xl font-semibold leading-tight tracking-tight">
-            Impact Lab — component preview
+            Farmers — component preview
           </h1>
           <p className="mt-3 max-w-2xl text-lg leading-relaxed text-muted-foreground">
             Poppins, one emerald primary, neutral zinc, four semantic tokens.
