@@ -138,7 +138,8 @@ CREATE TABLE IF NOT EXISTS orders (
 DO $$ BEGIN
   ALTER TABLE listings DROP CONSTRAINT IF EXISTS listings_quantity_kg_check;
   ALTER TABLE listings ADD CONSTRAINT listings_quantity_kg_check CHECK (quantity_kg >= 0);
-EXCEPTION WHEN others THEN NULL;
+EXCEPTION WHEN others THEN
+  RAISE NOTICE 'listings constraint migration: %', SQLERRM;
 END $$;
 
 CREATE INDEX IF NOT EXISTS orders_consumer_idx
