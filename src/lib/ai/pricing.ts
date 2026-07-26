@@ -22,12 +22,13 @@ const MOCK_RATES: Record<string, { pricePerKg: number; trend: PricingData["trend
   potato: { pricePerKg: 40, trend: "stable" },
 };
 
-/** Map plural/variant produce names onto their canonical MOCK_RATES key. */
+/** Map plural/variant produce names onto their canonical key. */
 const PRODUCE_ALIASES: Record<string, string> = {
   tomatoes: "tomato",
   onions: "onion",
   potatoes: "potato",
   "sukuma wiki": "sukuma",
+  "sukuma-wiki": "sukuma",
 };
 
 const DEFAULT_RATE = { pricePerKg: 55, trend: "stable" as const };
@@ -36,10 +37,23 @@ export function normalizeProduce(name: string): string {
   return name.trim().toLowerCase();
 }
 
+/**
+ * Canonical produce key: normalized, then resolved through the alias map, then
+ * a naive regular-plural stem as a last resort. This is the one place produce
+ * names are reconciled, so pricing and cart matching agree on identity
+ * (e.g. "Tomatoes", "tomato", "tomatoes" all → "tomato").
+ */
+export function canonicalProduce(name: string): string {
+  const normalized = normalizeProduce(name);
+  if (PRODUCE_ALIASES[normalized]) return PRODUCE_ALIASES[normalized];
+  // Regular plural fallback ("mangoes" → "mango" won't work, but "beans" → "bean").
+  const stem = normalized.endsWith("s") ? normalized.slice(0, -1) : normalized;
+  return PRODUCE_ALIASES[stem] ?? stem;
+}
+
 /** Recommend a fair price for a produce type. */
 export function recommendPrice(req: PriceRequest): PricingData {
-  const normalized = normalizeProduce(req.produceType);
-  const key = PRODUCE_ALIASES[normalized] ?? normalized;
+  const key = canonicalProduce(req.produceType);
   const match = MOCK_RATES[key] ?? DEFAULT_RATE;
   return {
     produce: key,

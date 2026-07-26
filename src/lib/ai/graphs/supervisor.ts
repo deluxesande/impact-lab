@@ -76,23 +76,33 @@ export async function runSupervisor(
     };
   }
 
-  // Classify intent.
+  // Classify intent AND extract the produce in one call.
   let intent: "pricing" | "advisory";
+  let produce: string | null = null;
   let model: string | undefined;
   try {
     const cls = await invokeStructured(
       IntentSchema,
-      [new SystemMessage("Classify the farmer's message intent."), new HumanMessage(message)],
+      [
+        new SystemMessage(
+          "Classify the farmer's message intent and, for pricing, extract the produce being priced.",
+        ),
+        new HumanMessage(message),
+      ],
       { runName: "supervisor.classify", tags: ["graph:supervisor"] },
     );
     intent = cls.data.intent;
+    produce = cls.data.produce;
     model = cls.provider;
   } catch {
     intent = keywordIntent(message);
   }
 
   if (intent === "pricing") {
-    const priced = await runPricingGraph({ produceType: produceFrom(message) });
+    // Prefer the LLM-extracted produce; fall back to a keyword scan of the
+    // message, then the raw message as a last resort.
+    const produceType = produce?.trim() || produceFrom(message);
+    const priced = await runPricingGraph({ produceType });
     toolCalls.push(...priced.toolCalls);
     const data: PricingData = priced.data;
     const phrased = await phrasePricing(data, language).catch(() => defaultPricingText(data, language));

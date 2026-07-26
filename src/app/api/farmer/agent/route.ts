@@ -6,6 +6,7 @@ import {
   logAgentRun,
 } from "@/lib/db/repo";
 import { runSupervisor } from "@/lib/ai/graphs/supervisor";
+import { withTimeout, AI_TIMEOUTS, TimeoutError } from "@/lib/ai/timeout";
 import type {
   FarmerAgentRequest,
   FarmerAgentResponse,
@@ -33,6 +34,9 @@ import type {
 /** Languages the contract supports. Mirrors the `Language` union. */
 const SUPPORTED_LANGUAGES: readonly Language[] = ["en", "sw"] as const;
 
+/** Upper bound on a farmer message, to bound token cost and flooding. */
+const MAX_MESSAGE_LENGTH = 2000;
+
 function isLanguage(value: unknown): value is Language {
   return typeof value === "string" && (SUPPORTED_LANGUAGES as readonly string[]).includes(value);
 }
@@ -57,6 +61,19 @@ export async function POST(
     if (typeof message !== "string" || message.trim().length === 0) {
       return NextResponse.json(
         { error: { code: "missing_message", message: "A non-empty 'message' is required." } },
+        { status: 400 },
+      );
+    }
+    // Cap message length: an oversized message inflates token cost and is a
+    // vector for prompt-flooding. 2000 chars is ample for a farmer's question.
+    if (message.length > MAX_MESSAGE_LENGTH) {
+      return NextResponse.json(
+        {
+          error: {
+            code: "message_too_long",
+            message: `'message' must be at most ${MAX_MESSAGE_LENGTH} characters.`,
+          },
+        },
         { status: 400 },
       );
     }
@@ -90,9 +107,37 @@ export async function POST(
       imageKey,
     });
 
-    // Run the supervisor agent (intent → pricing graph or advisory LLM).
+    // Run the supervisor agent (intent → pricing graph or advisory LLM), under
+    // an overall budget. A timeout degrades to a graceful reply rather than a
+    // 500 — the farmer always gets an answer, and the run is still logged.
     const startedAt = Date.now();
-    const result = await runSupervisor(message, language);
+    let result;
+    try {
+      result = await withTimeout(
+        runSupervisor(message, language),
+        AI_TIMEOUTS.agent,
+        "agent",
+      );
+    } catch (err) {
+      if (err instanceof TimeoutError) {
+        result = {
+          intent: "advisory" as const,
+          source: "timeout",
+          model: undefined,
+          toolCalls: [{ error: "agent budget exceeded" }],
+          reply: {
+            role: "assistant" as const,
+            intent: "advisory" as const,
+            content:
+              language === "sw"
+                ? "Samahani, imechukua muda mrefu kujibu. Tafadhali jaribu tena."
+                : "Sorry, that took too long to answer. Please try again.",
+          },
+        };
+      } else {
+        throw err;
+      }
+    }
     const latencyMs = Date.now() - startedAt;
     const reply = result.reply;
 

@@ -2,8 +2,9 @@ import { ChatGoogleGenerativeAI } from "@langchain/google-genai";
 import { ChatGroq } from "@langchain/groq";
 import { ChatOpenAI } from "@langchain/openai";
 import type { BaseChatModel } from "@langchain/core/language_models/chat_models";
-import type { BaseMessageLike } from "@langchain/core/messages";
+import { HumanMessage, type BaseMessageLike } from "@langchain/core/messages";
 import type { z } from "zod";
+import { withTimeout, AI_TIMEOUTS } from "./timeout";
 
 /**
  * Model provider setup and the fallback chain.
@@ -101,26 +102,55 @@ export interface StructuredResult<T> {
 export async function invokeStructured<T>(
   schema: z.ZodType<T>,
   messages: BaseMessageLike[],
-  opts: { requireVision?: boolean; runName?: string; tags?: string[] } = {},
+  opts: {
+    requireVision?: boolean;
+    runName?: string;
+    tags?: string[];
+    /** Per-call timeout; defaults to AI_TIMEOUTS.model. */
+    timeoutMs?: number;
+  } = {},
 ): Promise<StructuredResult<T>> {
   const providers = buildProviders().filter((p) => !opts.requireVision || p.vision);
   if (providers.length === 0) {
     throw new AllModelsFailedError([]);
   }
 
+  const timeoutMs = opts.timeoutMs ?? AI_TIMEOUTS.model;
   const errors: { provider: ProviderName; error: unknown }[] = [];
+
   for (const provider of providers) {
-    try {
-      const structured = provider.model.withStructuredOutput(schema);
-      // runName/tags surface in LangSmith traces when tracing is enabled.
-      const data = (await structured.invoke(messages, {
-        runName: opts.runName,
-        tags: [...(opts.tags ?? []), `provider:${provider.name}`],
-      })) as T;
-      return { data, provider: provider.name };
-    } catch (error) {
-      errors.push({ provider: provider.name, error });
+    const structured = provider.model.withStructuredOutput(schema);
+    const config = {
+      runName: opts.runName,
+      tags: [...(opts.tags ?? []), `provider:${provider.name}`],
+    };
+
+    // One reprompt on failure: structured-output parse errors are often fixed by
+    // an explicit nudge, and a transient timeout may not recur. Only then do we
+    // move to the next provider.
+    let lastError: unknown;
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        const msgs =
+          attempt === 0
+            ? messages
+            : [
+                ...messages,
+                new HumanMessage(
+                  "Your previous response was invalid. Return ONLY a value that matches the required schema.",
+                ),
+              ];
+        const data = (await withTimeout(
+          structured.invoke(msgs, config),
+          timeoutMs,
+          `model:${provider.name}`,
+        )) as T;
+        return { data, provider: provider.name };
+      } catch (error) {
+        lastError = error;
+      }
     }
+    errors.push({ provider: provider.name, error: lastError });
   }
   throw new AllModelsFailedError(errors);
 }
@@ -128,18 +158,23 @@ export async function invokeStructured<T>(
 /** Plain text generation over the fallback chain (for conversational replies). */
 export async function invokeText(
   messages: BaseMessageLike[],
-  opts: { requireVision?: boolean; runName?: string; tags?: string[] } = {},
+  opts: { requireVision?: boolean; runName?: string; tags?: string[]; timeoutMs?: number } = {},
 ): Promise<{ text: string; provider: ProviderName }> {
   const providers = buildProviders().filter((p) => !opts.requireVision || p.vision);
   if (providers.length === 0) throw new AllModelsFailedError([]);
 
+  const timeoutMs = opts.timeoutMs ?? AI_TIMEOUTS.model;
   const errors: { provider: ProviderName; error: unknown }[] = [];
   for (const provider of providers) {
     try {
-      const res = await provider.model.invoke(messages, {
-        runName: opts.runName,
-        tags: [...(opts.tags ?? []), `provider:${provider.name}`],
-      });
+      const res = await withTimeout(
+        provider.model.invoke(messages, {
+          runName: opts.runName,
+          tags: [...(opts.tags ?? []), `provider:${provider.name}`],
+        }),
+        timeoutMs,
+        `model:${provider.name}`,
+      );
       const text = typeof res.content === "string" ? res.content : JSON.stringify(res.content);
       return { text, provider: provider.name };
     } catch (error) {
