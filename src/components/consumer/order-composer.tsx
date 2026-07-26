@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import { useCart } from "./cart-provider";
 import { buildCartAction } from "@/lib/data/actions";
 import { formatKg } from "@/lib/format";
-import { produceBySlug } from "@/lib/data/produce";
+import { matchProduce } from "@/lib/data/produce";
 
 /**
  * Free-text order input — "I want tomatoes and sukuma for 4 people".
@@ -46,23 +46,18 @@ export function OrderComposer() {
         return;
       }
 
-      const { items, unavailable, people } = result.data;
+      const { items, aiBacked } = result.data;
       replace(items);
 
       const names = items
-        .map((i) => `${formatKg(i.quantityKg)} ${produceBySlug(i.produceSlug)?.name ?? i.produceSlug}`)
+        .map((i) => `${formatKg(i.quantityKg)} ${matchProduce(i.produceType)?.name ?? i.produceType}`)
         .join(", ");
 
       toast.success("Basket ready", {
-        description: people ? `${names} — sized for ${people} people.` : names,
+        // Only claim AI when the cart graph actually used a model; it falls back
+        // to a keyword matcher when no provider key is configured.
+        description: aiBacked ? names : `${names} — matched from what's in stock.`,
       });
-
-      // Recognised but out of stock — surfaced, never silently dropped.
-      if (unavailable.length > 0) {
-        toast.warning(`${unavailable.join(" and ")} out of stock`, {
-          description: "Everything else is in your basket.",
-        });
-      }
     });
   }
 

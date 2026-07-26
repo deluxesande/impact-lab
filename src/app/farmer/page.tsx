@@ -1,37 +1,40 @@
 import Link from "next/link";
 import { Cart, Inbox, Leaf } from "reicon-react";
-import { requireRole } from "@/lib/auth/roles";
-import { listingsByFarmer, ordersForFarmer, produceBySlug } from "@/lib/data/store";
+import { requireUserRow } from "@/lib/auth/current-user-row";
+import { farmerListingViews, farmerOrderViews } from "@/lib/data/queries";
 import { formatKES, formatKg, formatRate } from "@/lib/format";
 import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/shell/states";
 import { ProduceImage } from "@/components/produce/produce-image";
 import { DashboardTabs } from "@/components/farmer/dashboard-tabs";
-import type { Listing, Order } from "@/lib/data/types";
+import type { ListingView, OrderView } from "@/lib/data/view";
 
 export const metadata = { title: "Your produce" };
 
 /**
  * Farmer dashboard — active listings and incoming orders.
  *
- * A Server Component reading the store directly (§5.1: no HTTP layer on the web
- * surface). `requireRole` gates it and redirects a consumer to their own surface.
+ * Reads Postgres through the backend's repo in-process (§5.1). `requireUserRow`
+ * gates the page *and* resolves the Clerk id to the `users.id` uuid that
+ * `listFarmerListings` expects — passing a Clerk id would silently return nothing.
+ *
+ * The backend models one order per listing, so each order row here is a single
+ * produce line. That happens to suit a farmer's view better than a grouped
+ * basket would.
  */
 
-function ListingRow({ listing }: { listing: Listing }) {
-  const produce = produceBySlug(listing.produceSlug);
+function ListingRow({ view }: { view: ListingView }) {
+  const { listing, name } = view;
   const soldOut = listing.quantityKg <= 0;
 
   return (
     <li className="flex items-center gap-4 p-4">
       <div className="size-14 shrink-0 overflow-hidden rounded-lg">
-        <ProduceImage produceSlug={listing.produceSlug} photo={listing.photo} />
+        <ProduceImage produceType={listing.produceType} imageUrl={listing.imageUrl} />
       </div>
 
       <div className="min-w-0 flex-1">
-        <p className="truncate font-medium text-foreground">
-          {produce?.name ?? listing.produceSlug}
-        </p>
+        <p className="truncate font-medium text-foreground">{name}</p>
         <p className="text-sm text-muted-foreground">
           <span className="figure">{formatKg(listing.quantityKg)}</span>
           {soldOut ? " · sold out" : " available"}
@@ -48,11 +51,8 @@ function ListingRow({ listing }: { listing: Listing }) {
   );
 }
 
-function OrderRow({ order, farmerId }: { order: Order; farmerId: string }) {
-  // An order can span several farmers; only show this farmer's lines and total.
-  const mine = new Set(listingsByFarmer(farmerId).map((l) => l.id));
-  const items = order.items.filter((i) => mine.has(i.listingId));
-  const total = items.reduce((sum, i) => sum + i.lineTotal, 0);
+function OrderRow({ view }: { view: OrderView }) {
+  const { order, name } = view;
 
   return (
     <li className="flex items-start gap-4 p-4">
@@ -65,9 +65,7 @@ function OrderRow({ order, farmerId }: { order: Order; farmerId: string }) {
 
       <div className="min-w-0 flex-1">
         <p className="font-medium text-foreground">
-          {items
-            .map((i) => `${formatKg(i.quantityKg)} ${produceBySlug(i.produceSlug)?.name ?? i.produceSlug}`)
-            .join(", ")}
+          <span className="figure">{formatKg(order.quantityKg)}</span> {name}
         </p>
         <p className="text-sm text-muted-foreground">
           <time dateTime={order.createdAt}>
@@ -80,7 +78,7 @@ function OrderRow({ order, farmerId }: { order: Order; farmerId: string }) {
       </div>
 
       <div className="text-right">
-        <p className="figure font-medium text-foreground">{formatKES(total)}</p>
+        <p className="figure font-medium text-foreground">{formatKES(order.totalPrice)}</p>
         <span className="mt-1 inline-flex rounded-full bg-success/10 px-2 py-0.5 text-xs font-medium text-success">
           Paid
         </span>
@@ -90,16 +88,15 @@ function OrderRow({ order, farmerId }: { order: Order; farmerId: string }) {
 }
 
 export default async function FarmerDashboard() {
-  const { userId } = await requireRole("farmer");
+  const { row } = await requireUserRow("farmer");
 
-  const listings = listingsByFarmer(userId);
-  const orders = ordersForFarmer(userId);
+  const [listings, orders] = await Promise.all([
+    farmerListingViews(row.id),
+    farmerOrderViews(row.id),
+  ]);
 
-  const activeCount = listings.filter((l) => l.active && l.quantityKg > 0).length;
-  const earned = orders.reduce((sum, o) => {
-    const mine = new Set(listings.map((l) => l.id));
-    return sum + o.items.filter((i) => mine.has(i.listingId)).reduce((s, i) => s + i.lineTotal, 0);
-  }, 0);
+  const activeCount = listings.filter((v) => v.listing.active && v.listing.quantityKg > 0).length;
+  const earned = orders.reduce((sum, v) => sum + v.order.totalPrice, 0);
 
   return (
     <main className="mx-auto w-full max-w-6xl flex-1 px-6 py-10 md:px-8">
@@ -129,8 +126,8 @@ export default async function FarmerDashboard() {
           listings={
             listings.length > 0 ? (
               <ul className="divide-y divide-border overflow-hidden rounded-xl border border-border bg-card">
-                {listings.map((l) => (
-                  <ListingRow key={l.id} listing={l} />
+                {listings.map((view) => (
+                  <ListingRow key={view.listing.id} view={view} />
                 ))}
               </ul>
             ) : (
@@ -149,8 +146,8 @@ export default async function FarmerDashboard() {
           orders={
             orders.length > 0 ? (
               <ul className="divide-y divide-border overflow-hidden rounded-xl border border-border bg-card">
-                {orders.map((o) => (
-                  <OrderRow key={o.id} order={o} farmerId={userId} />
+                {orders.map((view) => (
+                  <OrderRow key={view.order.id} view={view} />
                 ))}
               </ul>
             ) : (

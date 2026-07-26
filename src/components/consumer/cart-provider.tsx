@@ -11,7 +11,7 @@ import {
   setItemQuantity,
   subscribe,
 } from "@/lib/cart-store";
-import type { CartItem } from "@/lib/data/types";
+import type { CartItem } from "@/lib/ai/types";
 
 /**
  * `useCart` — read and mutate the cart.

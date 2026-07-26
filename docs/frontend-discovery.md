@@ -424,9 +424,11 @@ phrasings including `"nyanya kwa watu tatu"`. Swapping it for a real model call
 means replacing that one function; the screens depend only on its `CartItem[]`
 return type.
 
-> ⚠️ **Do not call the cart builder "AI" in the demo** until that swap happens.
-> Describe it as the ordering flow. The price *is* a real (stubbed) backend call;
-> the cart is not.
+> ✅ **Resolved at integration.** Both stand-ins are gone. The cart now runs the
+> backend's LangGraph cart graph (verified `source: llm (groq)`) and pricing runs
+> through `runSupervisor`. Both report whether a model actually answered, and the
+> UI labels accordingly — so it is safe to call it AI *when the keys are set*, and
+> it degrades honestly when they are not.
 
 ### 5.3 Fetching & state
 
@@ -533,6 +535,52 @@ Steps 5 and 6 are independent once 4 lands.
 
 ---
 
+## 7.1 Integration with the backend (done)
+
+The backend shipped Postgres, MinIO, real auth and the six `mvp.md` endpoints, so
+three workarounds documented above became **deletions** rather than baggage:
+
+| Retired | Replaced by |
+| --- | --- |
+| `data/store.ts` — `globalThis` in-memory store | `lib/db/repo.ts` (Postgres) |
+| `data/cart.ts` — deterministic matcher | `lib/ai/graphs/cart.ts` (LLM + code-side matching) |
+| `data/pricing.ts` — "Maize" mismatch guard | `lib/ai/graphs/supervisor.ts` (produce-aware) |
+| `lib/image.ts` data-URL photo hack | real MinIO storage + presigned URLs |
+
+Added: `data/queries.ts` (reads), `data/view.ts` (their free-text `produceType` →
+our catalogue), `auth/current-user-row.ts` (Clerk id → `users.id` uuid),
+`db/seed.ts` (`bun run db:seed`, idempotent).
+
+**Access is in-process, not over HTTP.** Server Components and Actions import
+`repo.ts` and the graphs directly; a hop through the app's own route handlers would
+only add absolute-URL construction, Clerk cookie forwarding and a second auth
+check. Their handlers remain the Android contract, untouched.
+
+### Contract mismatches bridged
+
+- **`produceType` is free text**, not a catalogue key. `view.ts` resolves it via
+  `matchProduce()` and degrades gracefully — an unrecognised produce shows the
+  farmer's own wording and claims **no** saving rather than 0%.
+- **`Order` is one-per-listing**, so an N-item basket becomes N rows. There is no
+  transaction spanning the basket: lines are pre-checked against live stock and
+  clamped, but one can still fail after another succeeded, so failures are named
+  explicitly on the success screen.
+- **`OrderStatus` is `mocked_delivered`** (underscore), not our earlier hyphen.
+- **No `farmerName`** on `Listing`, so the consumer card no longer names the
+  farmer — see open question #5's sibling note below.
+- **Language:** `PriceRequest` has no `language` field, so pricing routes through
+  `runSupervisor`, which does phrase in Swahili. Calling `runPricingGraph` directly
+  would have silently made the EN/SW toggle a no-op.
+
+### Verified against a live stack
+
+Postgres and MinIO run via `podman` (no docker daemon available here; plain
+`podman run` matching the compose defaults). After `db:migrate` + `db:seed`,
+15 assertions passed across the real read and write paths — catalogue resolution,
+graceful degradation for unknown produce, order visible to the farmer, and stock
+decremented in Postgres. AI verified live: cart `source: llm (groq)`, Swahili cart
+parsed, and Swahili pricing prose returned.
+
 ## 8. Accessibility & quality floor
 
 Non-negotiable, checked in step 7:
@@ -590,6 +638,16 @@ Non-negotiable, checked in step 7:
 | 7 | ✅ **Decided: no chart.** The struck-through mall price plus a percentage pill reads faster and cleaner at card size than any chart would, and it repeats consistently across the grid, the cart, and the success screen. A chart would add a dependency and a second visual language for one number. | — | settled |
 
 Nothing here blocks steps 0–5. #6 and #7 are mine to decide and only touch step 6.
+
+### Raised during backend integration
+
+| # | Issue | Owner |
+| --- | --- | --- |
+| 8 | 🚩 **Clerk session token needs `{"metadata": "{{user.public_metadata}}"}`.** `requireUser()` reads `sessionClaims.metadata.role`, but Clerk's default token omits public metadata, so every role-gated API route returns `403 "No role assigned"` for a real session. Masked locally by `AUTH_DEV_BYPASS=1`, so the real path may never have been exercised. Dashboard change only. | team |
+| 9 | ⚠️ **`AUTH_DEV_BYPASS=1` is currently set**, so API routes take identity from `x-dev-user-id`/`x-dev-role` headers instead of Clerk. Harmless for the web pages (they use real Clerk via `requireRole`), but the API is effectively unauthenticated — must be off for anything deployed. | team |
+| 10 | ⚠️ **Two disagreeing supermarket prices.** The cart graph applies a flat 1.75× markup; our catalogue has per-produce rates. Web uses the catalogue (the backend's `Listing` has no mall price, so cards have no alternative), which means **web and Android quote different savings**. Fix is one source of truth. | team |
+| 11 | `farmerName` absent from `Listing`, so consumer cards no longer name the farmer. "Direct from a named farmer" is the pitch — worth adding back. | backend |
+| 12 | `MINIO_PUBLIC_ENDPOINT` is unset, so presigned URLs embed `localhost`. Fine for a laptop demo; breaks for any device that isn't the server. | team, before deploy |
 
 ---
 
