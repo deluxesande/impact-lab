@@ -101,7 +101,7 @@ export interface StructuredResult<T> {
 export async function invokeStructured<T>(
   schema: z.ZodType<T>,
   messages: BaseMessageLike[],
-  opts: { requireVision?: boolean } = {},
+  opts: { requireVision?: boolean; runName?: string; tags?: string[] } = {},
 ): Promise<StructuredResult<T>> {
   const providers = buildProviders().filter((p) => !opts.requireVision || p.vision);
   if (providers.length === 0) {
@@ -112,7 +112,11 @@ export async function invokeStructured<T>(
   for (const provider of providers) {
     try {
       const structured = provider.model.withStructuredOutput(schema);
-      const data = (await structured.invoke(messages)) as T;
+      // runName/tags surface in LangSmith traces when tracing is enabled.
+      const data = (await structured.invoke(messages, {
+        runName: opts.runName,
+        tags: [...(opts.tags ?? []), `provider:${provider.name}`],
+      })) as T;
       return { data, provider: provider.name };
     } catch (error) {
       errors.push({ provider: provider.name, error });
@@ -124,7 +128,7 @@ export async function invokeStructured<T>(
 /** Plain text generation over the fallback chain (for conversational replies). */
 export async function invokeText(
   messages: BaseMessageLike[],
-  opts: { requireVision?: boolean } = {},
+  opts: { requireVision?: boolean; runName?: string; tags?: string[] } = {},
 ): Promise<{ text: string; provider: ProviderName }> {
   const providers = buildProviders().filter((p) => !opts.requireVision || p.vision);
   if (providers.length === 0) throw new AllModelsFailedError([]);
@@ -132,7 +136,10 @@ export async function invokeText(
   const errors: { provider: ProviderName; error: unknown }[] = [];
   for (const provider of providers) {
     try {
-      const res = await provider.model.invoke(messages);
+      const res = await provider.model.invoke(messages, {
+        runName: opts.runName,
+        tags: [...(opts.tags ?? []), `provider:${provider.name}`],
+      });
       const text = typeof res.content === "string" ? res.content : JSON.stringify(res.content);
       return { text, provider: provider.name };
     } catch (error) {

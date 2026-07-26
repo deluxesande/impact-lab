@@ -64,10 +64,24 @@ async function main() {
     const [{ count }] = await sql<{ count: number }[]>`SELECT count(*)::int AS count FROM agent_runs`;
 
     if (count === 0) {
-      console.log(`${DIM}No agent runs recorded yet. Hit POST /api/farmer/agent to generate some.${RESET}`);
-      return;
+      console.log(
+        `${DIM}No conversational agent runs yet (POST /api/farmer/agent to generate some).${RESET}`,
+      );
+    } else {
+      await printAgentRuns(sql, count, limit);
     }
 
+    await printAiRuns(sql, limit);
+  } finally {
+    await sql.end({ timeout: 5 });
+  }
+}
+
+async function printAgentRuns(
+  sql: ReturnType<typeof getSql>,
+  count: number,
+  limit: number,
+): Promise<void> {
     // --- Fallback statistics ---
     const stats = await sql<StatRow[]>`
       SELECT model_used,
@@ -124,9 +138,45 @@ async function main() {
       if (r.error) console.log(`  ${RED}error: ${r.error.slice(0, 120)}${RESET}`);
     }
     console.log("");
-  } finally {
-    await sql.end({ timeout: 5 });
+}
+
+/** AI task-graph runs (/api/ai/price, /api/ai/cart) from the ai_runs table. */
+async function printAiRuns(sql: ReturnType<typeof getSql>, limit: number): Promise<void> {
+  const [{ count: aiCount }] = await sql<{ count: number }[]>`SELECT count(*)::int AS count FROM ai_runs`;
+  if (aiCount === 0) return;
+
+  const aiRuns = await sql<
+    {
+      created_at: Date;
+      endpoint: string;
+      source: string;
+      model_used: string | null;
+      latency_ms: number | null;
+      output: { pricePerKg?: number; currency?: string; itemCount?: number; total?: number } | null;
+      error: string | null;
+    }[]
+  >`
+    SELECT created_at, endpoint, source, model_used, latency_ms, output, error
+    FROM ai_runs ORDER BY created_at DESC LIMIT ${limit}
+  `;
+
+  console.log(`${BOLD}AI task-graph runs${RESET} ${DIM}(${aiCount} total)${RESET}`);
+  console.log(`${DIM}${"─".repeat(52)}${RESET}`);
+  for (const r of aiRuns) {
+    const model = r.model_used ? colorModel(r.model_used) : colorModel(r.source);
+    const lat = r.latency_ms != null ? `${DIM}${r.latency_ms}ms${RESET}` : "";
+    let detail = "";
+    if (r.endpoint === "price" && r.output?.pricePerKg) {
+      detail = ` ${CYAN}${r.output.currency ?? "KES"} ${r.output.pricePerKg}/kg${RESET}`;
+    } else if (r.endpoint === "cart" && r.output?.itemCount != null) {
+      detail = ` ${CYAN}${r.output.itemCount} items, KES ${r.output.total}${RESET}`;
+    }
+    console.log(
+      `${DIM}${fmtTime(r.created_at)}${RESET}  ${r.endpoint.padEnd(6)} → ${model}  ${lat}${detail}`,
+    );
+    if (r.error) console.log(`  ${RED}error: ${r.error.slice(0, 120)}${RESET}`);
   }
+  console.log("");
 }
 
 main().catch((err) => {

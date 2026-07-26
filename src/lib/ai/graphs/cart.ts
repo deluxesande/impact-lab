@@ -101,7 +101,7 @@ export async function runCartGraph(
     );
     const human = new HumanMessage(`Available produce: ${available}\n\nShopper said: "${text}"`);
 
-    const { data, provider } = await invokeStructured(CartExtractionSchema, [system, human]);
+    const { data, provider } = await invokeStructured(CartExtractionSchema, [system, human], { runName: "cart.extract", tags: ["graph:cart"] });
 
     const servings = data.servings && data.servings > 0 ? Math.min(data.servings, 50) : 1;
     const wants = data.items.map((i) => ({

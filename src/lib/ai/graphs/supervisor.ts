@@ -80,10 +80,11 @@ export async function runSupervisor(
   let intent: "pricing" | "advisory";
   let model: string | undefined;
   try {
-    const cls = await invokeStructured(IntentSchema, [
-      new SystemMessage("Classify the farmer's message intent."),
-      new HumanMessage(message),
-    ]);
+    const cls = await invokeStructured(
+      IntentSchema,
+      [new SystemMessage("Classify the farmer's message intent."), new HumanMessage(message)],
+      { runName: "supervisor.classify", tags: ["graph:supervisor"] },
+    );
     intent = cls.data.intent;
     model = cls.provider;
   } catch {
@@ -106,13 +107,16 @@ export async function runSupervisor(
 
   // Advisory: general farming knowledge.
   try {
-    const { text, provider } = await invokeText([
-      new SystemMessage(
-        "You are an agricultural extension assistant for smallholder Kenyan farmers. Give practical, " +
-          "concise advice (planting, spacing, pests, storage, seasonality)." + langInstruction(language),
-      ),
-      new HumanMessage(message),
-    ]);
+    const { text, provider } = await invokeText(
+      [
+        new SystemMessage(
+          "You are an agricultural extension assistant for smallholder Kenyan farmers. Give practical, " +
+            "concise advice (planting, spacing, pests, storage, seasonality)." + langInstruction(language),
+        ),
+        new HumanMessage(message),
+      ],
+      { runName: "supervisor.advisory", tags: ["graph:supervisor"] },
+    );
     return {
       intent,
       source: "llm",
@@ -143,14 +147,17 @@ function defaultPricingText(data: PricingData, language: Language): string {
 }
 
 async function phrasePricing(data: PricingData, language: Language): Promise<string> {
-  const { text } = await invokeText([
-    new SystemMessage(
-      "Phrase this produce price as one short, friendly sentence for a farmer." +
-        langInstruction(language),
-    ),
-    new HumanMessage(
-      `Produce: ${data.produce}, price: ${data.currency} ${data.pricePerKg}/kg, trend: ${data.trend}, market: ${data.market}`,
-    ),
-  ]);
+  const { text } = await invokeText(
+    [
+      new SystemMessage(
+        "Phrase this produce price as one short, friendly sentence for a farmer." +
+          langInstruction(language),
+      ),
+      new HumanMessage(
+        `Produce: ${data.produce}, price: ${data.currency} ${data.pricePerKg}/kg, trend: ${data.trend}, market: ${data.market}`,
+      ),
+    ],
+    { runName: "supervisor.phrase", tags: ["graph:supervisor"] },
+  );
   return text.trim();
 }

@@ -85,6 +85,27 @@ CREATE TABLE IF NOT EXISTS agent_runs (
 CREATE INDEX IF NOT EXISTS agent_runs_conversation_created_idx
   ON agent_runs (conversation_id, created_at);
 
+-- Observability log for the stateless AI task graphs (/api/ai/price,
+-- /api/ai/cart). These have no conversation, so they get their own table
+-- rather than overloading agent_runs. `endpoint` names the graph; `source`
+-- records the path taken (shamba+llm | llm | heuristic); `model_used` the
+-- provider when an LLM ran.
+CREATE TABLE IF NOT EXISTS ai_runs (
+  id           uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  endpoint     text NOT NULL,              -- 'price' | 'cart'
+  source       text NOT NULL,              -- shamba+llm | llm | heuristic
+  model_used   text,                       -- gemini | groq | openai (when LLM ran)
+  input        jsonb,                      -- the request (produceType / text)
+  output       jsonb,                      -- the produced result
+  tool_calls   jsonb,                      -- Shamba queries + results
+  latency_ms   integer,
+  error        text,
+  created_at   timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS ai_runs_endpoint_created_idx
+  ON ai_runs (endpoint, created_at DESC);
+
 /* -------------------------------------------------------------------------- */
 /* Marketplace (mvp.md): users, listings, orders                              */
 /* -------------------------------------------------------------------------- */
