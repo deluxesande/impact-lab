@@ -96,7 +96,7 @@ export async function runPricingGraph(req: PriceRequest): Promise<PricingGraphRe
       `Produce: ${req.produceType}\nRegion: ${req.region ?? "Kenya (national)"}\n${dataBlock}`,
     );
 
-    const { data, provider } = await invokeStructured(PriceReasoningSchema, [system, human]);
+    const { data, provider } = await invokeStructured(PriceReasoningSchema, [system, human], { runName: "pricing.reason", tags: ["graph:pricing"] });
 
     return {
       data: {

@@ -416,3 +416,44 @@ export async function listOrdersForFarmer(farmerId: string): Promise<Order[]> {
   `;
   return rows.map(mapOrder);
 }
+
+/* -------------------------------------------------------------------------- */
+/* AI task-graph runs (observability for /api/ai/price, /api/ai/cart)         */
+/* -------------------------------------------------------------------------- */
+
+export interface LogAiRunInput {
+  endpoint: "price" | "cart";
+  source: string;
+  modelUsed?: string;
+  input?: unknown;
+  output?: unknown;
+  toolCalls?: unknown;
+  latencyMs?: number;
+  error?: string;
+}
+
+/**
+ * Record a stateless AI task-graph run. Best-effort: logging must never break
+ * the request, so failures here are swallowed (unlike agent_runs, which is
+ * transactional with a persisted conversation).
+ */
+export async function logAiRun(input: LogAiRunInput): Promise<void> {
+  try {
+    const sql = getSql();
+    await sql`
+      INSERT INTO ai_runs (endpoint, source, model_used, input, output, tool_calls, latency_ms, error)
+      VALUES (
+        ${input.endpoint},
+        ${input.source},
+        ${input.modelUsed ?? null},
+        ${input.input !== undefined ? toJsonb(sql, input.input) : null},
+        ${input.output !== undefined ? toJsonb(sql, input.output) : null},
+        ${input.toolCalls !== undefined ? toJsonb(sql, input.toolCalls) : null},
+        ${input.latencyMs ?? null},
+        ${input.error ?? null}
+      )
+    `;
+  } catch (err) {
+    console.warn("[ai_runs] log failed:", String(err).slice(0, 160));
+  }
+}

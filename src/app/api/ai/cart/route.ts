@@ -1,7 +1,8 @@
 import { NextResponse } from "next/server";
 import { requireUser, AuthError } from "@/lib/auth/require-user";
-import { listActiveListings } from "@/lib/db/repo";
+import { listActiveListings, logAiRun } from "@/lib/db/repo";
 import { runCartGraph } from "@/lib/ai/graphs/cart";
+import { withDebug } from "@/lib/api/debug";
 import type { CartRequest, CartResponse, ApiError } from "@/lib/ai/types";
 
 /**
@@ -34,9 +35,21 @@ export async function POST(request: Request): Promise<NextResponse<CartResponse 
     }
 
     const listings = await listActiveListings();
-    const { response } = await runCartGraph(body.text, listings);
 
-    return NextResponse.json(response, { status: 200 });
+    const startedAt = Date.now();
+    const { response, source, model } = await runCartGraph(body.text, listings);
+    const latencyMs = Date.now() - startedAt;
+
+    await logAiRun({
+      endpoint: "cart",
+      source,
+      modelUsed: model,
+      input: { text: body.text },
+      output: { itemCount: response.items.length, total: response.total },
+      latencyMs,
+    });
+
+    return NextResponse.json(withDebug(response, { source, model }), { status: 200 });
   } catch (err) {
     if (err instanceof AuthError) {
       const status = err.code === "unauthorized" ? 401 : 403;

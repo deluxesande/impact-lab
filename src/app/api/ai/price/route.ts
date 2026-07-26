@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import { requireUser, AuthError } from "@/lib/auth/require-user";
 import { runPricingGraph } from "@/lib/ai/graphs/pricing";
+import { logAiRun } from "@/lib/db/repo";
+import { withDebug } from "@/lib/api/debug";
 import type { PriceRequest, PricingData, ApiError } from "@/lib/ai/types";
 
 /**
@@ -34,14 +36,31 @@ export async function POST(request: Request): Promise<NextResponse<PricingData |
       );
     }
 
-    const { data } = await runPricingGraph({
+    const priceReq: PriceRequest = {
       produceType: body.produceType,
       region: typeof body.region === "string" ? body.region : undefined,
       quantityKg: typeof body.quantityKg === "number" ? body.quantityKg : undefined,
       imageKey: typeof body.imageKey === "string" ? body.imageKey : undefined,
+    };
+
+    const startedAt = Date.now();
+    const result = await runPricingGraph(priceReq);
+    const latencyMs = Date.now() - startedAt;
+
+    await logAiRun({
+      endpoint: "price",
+      source: result.source,
+      modelUsed: result.model,
+      input: priceReq,
+      output: result.data,
+      toolCalls: result.toolCalls.length ? result.toolCalls : undefined,
+      latencyMs,
     });
 
-    return NextResponse.json(data, { status: 200 });
+    return NextResponse.json(
+      withDebug(result.data, { source: result.source, model: result.model, toolCalls: result.toolCalls }),
+      { status: 200 },
+    );
   } catch (err) {
     if (err instanceof AuthError) {
       const status = err.code === "unauthorized" ? 401 : 403;
