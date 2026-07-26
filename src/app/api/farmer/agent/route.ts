@@ -110,11 +110,27 @@ export async function POST(
     // Run the supervisor agent (intent → pricing graph or advisory LLM), under
     // an overall budget. A timeout degrades to a graceful reply rather than a
     // 500 — the farmer always gets an answer, and the run is still logged.
+    // Attach late-completion observers so the result is still observable even
+    // after the timeout path is taken.
     const startedAt = Date.now();
+    const supervisorPromise = runSupervisor(message, language);
+    supervisorPromise.then(
+      (lateResult) => {
+        console.warn("[agent] supervisor completed after timeout", {
+          latencyMs: Date.now() - startedAt,
+          source: lateResult.source,
+        });
+      },
+      (lateError) => {
+        console.warn("[agent] supervisor failed after timeout", {
+          error: String(lateError).slice(0, 200),
+        });
+      },
+    );
     let result;
     try {
       result = await withTimeout(
-        runSupervisor(message, language),
+        supervisorPromise,
         AI_TIMEOUTS.agent,
         "agent",
       );

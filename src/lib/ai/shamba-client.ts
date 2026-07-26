@@ -103,6 +103,8 @@ async function request<T>(
 
   // Abort the request if it exceeds the Shamba budget, so a slow upstream can't
   // stall the pricing graph — it falls through to the LLM/heuristic instead.
+  // The timer stays active until the response body is fully read, not just until
+  // headers arrive.
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), AI_TIMEOUTS.shamba);
   let res: Response;
@@ -119,19 +121,22 @@ async function request<T>(
       ...(bodyString ? { body: bodyString } : {}),
     });
   } catch (err) {
+    clearTimeout(timer);
     if (err instanceof Error && err.name === "AbortError") {
       throw new ShambaApiError(0, `Shamba ${method} ${path} timed out after ${AI_TIMEOUTS.shamba}ms`);
     }
     throw err;
+  }
+
+  try {
+    if (!res.ok) {
+      const text = await res.text().catch(() => "");
+      throw new ShambaApiError(res.status, `Shamba ${method} ${path} -> ${res.status}: ${text.slice(0, 200)}`);
+    }
+    return (await res.json()) as T;
   } finally {
     clearTimeout(timer);
   }
-
-  if (!res.ok) {
-    const text = await res.text().catch(() => "");
-    throw new ShambaApiError(res.status, `Shamba ${method} ${path} -> ${res.status}: ${text.slice(0, 200)}`);
-  }
-  return (await res.json()) as T;
 }
 
 /* -------------------------------------------------------------------------- */

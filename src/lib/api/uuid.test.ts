@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { isUuid } from "./uuid";
+import { isUuid } from "@/lib/api/uuid";
 
 describe("isUuid", () => {
   test("accepts a valid v4 uuid", () => {

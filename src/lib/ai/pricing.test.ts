@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { recommendPrice, normalizeProduce, canonicalProduce } from "./pricing";
+import { recommendPrice, normalizeProduce, canonicalProduce } from "@/lib/ai/pricing";
 
 describe("normalizeProduce", () => {
   test("trims and lowercases", () => {
@@ -26,6 +26,15 @@ describe("canonicalProduce", () => {
 
   test("passes through an unknown produce normalized", () => {
     expect(canonicalProduce("Managu")).toBe("managu");
+  });
+
+  test("does not return inherited prototype values", () => {
+    for (const key of ["constructor", "__proto__", "toString", "valueOf", "prototype"]) {
+      const result = canonicalProduce(key);
+      expect(typeof result).toBe("string");
+      expect(result).not.toContain("function");
+      expect(result).not.toContain("Object");
+    }
   });
 });
 
