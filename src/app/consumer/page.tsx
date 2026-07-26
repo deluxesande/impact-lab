@@ -1,9 +1,7 @@
 import Link from "next/link";
 import { ChatDots, Leaf } from "reicon-react";
 import { requireRole } from "@/lib/auth/roles";
-import { activeListings } from "@/lib/data/store";
-import { produceBySlug } from "@/lib/data/produce";
-import { savingPercent } from "@/lib/format";
+import { activeListingViews } from "@/lib/data/queries";
 import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/shell/states";
 import { ListingCard } from "@/components/consumer/listing-card";
@@ -13,21 +11,20 @@ export const metadata = { title: "Fresh from the farm" };
 /**
  * Consumer home — browse what farmers have listed.
  *
- * Server Component reading the store directly (§5.1). The headline savings figure
- * is computed from live listings rather than hard-coded, so it can never contradict
- * the cards underneath it.
+ * Reads Postgres through the backend's repo in-process (§5.1: no HTTP layer on
+ * the web surface). The headline savings figure is derived from the live listings
+ * on screen, so it can never contradict the cards underneath it.
+ *
+ * Stays dynamic — `requireRole()` calls `auth()`, and the presigned image URLs in
+ * these views expire, so this must not be statically cached.
  */
 export default async function ConsumerHome() {
   await requireRole("consumer");
 
-  const listings = activeListings();
+  const views = await activeListingViews();
 
   // Best genuine saving across everything in stock. Derived, never asserted.
-  const bestSaving = listings.reduce<number>((best, l) => {
-    const mall = produceBySlug(l.produceSlug)?.mallPricePerKg;
-    const saving = mall ? savingPercent(l.pricePerKg, mall) : null;
-    return saving && saving > best ? saving : best;
-  }, 0);
+  const bestSaving = views.reduce((best, v) => (v.saving && v.saving > best ? v.saving : best), 0);
 
   return (
     <main className="mx-auto w-full max-w-6xl flex-1 px-6 py-10 md:px-8">
@@ -51,12 +48,12 @@ export default async function ConsumerHome() {
         </Button>
       </div>
 
-      {listings.length > 0 ? (
+      {views.length > 0 ? (
         <div className="mt-8 grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
-          {listings.map((listing, i) => (
+          {views.map((view, i) => (
             <ListingCard
-              key={listing.id}
-              listing={listing}
+              key={view.listing.id}
+              view={view}
               // First row is above the fold on most viewports.
               priority={i < 3}
             />

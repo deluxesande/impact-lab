@@ -1,44 +1,44 @@
 import { Leaf } from "reicon-react";
 import { cn } from "@/lib/utils";
-import { produceBySlug } from "@/lib/data/produce";
+import { matchProduce } from "@/lib/data/produce";
 
 /**
  * Produce imagery, with a graceful fallback.
  *
- * Listings carry a `photo` only when the farmer attached one, and it's a
- * downscaled data URL (see src/lib/image.ts — the upload endpoint is a mock that
- * discards files, so nothing can be fetched back by key). Everything else — the
- * six seeded listings especially — falls back to a generated tile.
+ * `imageUrl` is a **short-lived presigned MinIO GET URL**, minted per request by
+ * the backend's `presentListings()`. Two consequences:
+ *   - it expires, so any page rendering it must stay dynamic (see queries.ts);
+ *   - it points at an arbitrary storage host, so `next/image` would need
+ *     `remotePatterns` in next.config.ts for every deployment. A plain `<img>`
+ *     avoids coupling the frontend to storage hostnames, and the object is
+ *     already a modest photo rather than something worth re-optimising.
  *
- * The placeholder is deliberately **on-palette**: neutral surface with an
- * emerald glyph and the produce initial. No per-produce hues, because the brief
- * is one primary with neutrals and semantics only, and a rainbow of produce
- * colours would quietly break that.
+ * `produceType` is free text from the farmer, so the label resolves through the
+ * catalogue where possible and otherwise shows their own wording.
+ *
+ * The placeholder is deliberately **on-palette**: neutral surface, emerald glyph.
+ * No per-produce hues — the brief is one primary plus neutrals and semantics, and
+ * a rainbow of produce colours would quietly break that.
  */
 export function ProduceImage({
-  produceSlug,
-  photo,
+  produceType,
+  imageUrl,
   className,
   priority,
 }: {
-  produceSlug: string;
-  photo?: string;
+  produceType: string;
+  imageUrl?: string;
   className?: string;
   /** Skip lazy-loading for above-the-fold cards. */
   priority?: boolean;
 }) {
-  const produce = produceBySlug(produceSlug);
-  const label = produce?.name ?? produceSlug;
+  const label = matchProduce(produceType)?.name ?? produceType;
 
-  if (photo) {
+  if (imageUrl) {
     return (
-      /* `photo` is a data URL (see src/lib/image.ts): next/image cannot optimise
-         those, and `unoptimized` would buy nothing since the client already
-         downscaled it to ~40 KB. The directive must sit immediately above the
-         element to apply. */
       // eslint-disable-next-line @next/next/no-img-element
       <img
-        src={photo}
+        src={imageUrl}
         alt={label}
         loading={priority ? "eager" : "lazy"}
         decoding="async"

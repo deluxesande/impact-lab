@@ -17,13 +17,9 @@ import {
 import { ProduceImage } from "@/components/produce/produce-image";
 import { PriceCard } from "./price-card";
 import { createListingAction, suggestPriceAction } from "@/lib/data/actions";
-import type { PriceSuggestion } from "@/lib/data/types";
-import { PRODUCE } from "@/lib/data/produce";
-import {
-  ACCEPTED_IMAGE_TYPES,
-  fileToDownscaledDataUrl,
-  uploadProduceImage,
-} from "@/lib/image";
+import type { PriceSuggestion } from "@/lib/data/actions";
+import { PRODUCE, produceBySlug } from "@/lib/data/produce";
+import { ACCEPTED_IMAGE_TYPES, uploadProduceImage } from "@/lib/image";
 import { formatKES } from "@/lib/format";
 
 /**
@@ -44,14 +40,22 @@ export function NewListingForm({ language }: { language: "en" | "sw" }) {
   const [produceSlug, setProduceSlug] = useState("");
   const [quantity, setQuantity] = useState("");
   const [price, setPrice] = useState("");
-  const [photo, setPhoto] = useState<string | undefined>();
+  // Local blob URL purely for the form's preview; the listing stores `imageKey`,
+  // and after publishing the image comes back as a presigned URL from MinIO.
+  const [preview, setPreview] = useState<string | undefined>();
   const [photoFile, setPhotoFile] = useState<File | undefined>();
+  const [imageKey, setImageKey] = useState<string | undefined>();
+  const [uploading, setUploading] = useState(false);
   const [suggestion, setSuggestion] = useState<PriceSuggestion | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const [pricing, startPricing] = useTransition();
   const [publishing, startPublishing] = useTransition();
 
+  // The picker holds a catalogue slug; the backend stores free-text `produceType`.
+  // Sending the catalogue's canonical name means matchProduce() resolves it back
+  // reliably on the read path, so display names and mall prices stay consistent.
+  const produceType = produceBySlug(produceSlug)?.name ?? "";
   const quantityKg = Number(quantity);
   const pricePerKg = Number(price);
   const canPrice = Boolean(produceSlug) && Number.isFinite(quantityKg) && quantityKg > 0;
@@ -65,29 +69,39 @@ export function NewListingForm({ language }: { language: "en" | "sw" }) {
 
   async function handlePhoto(file: File | undefined) {
     if (!file) return;
-    try {
-      // Preview + what we actually store. See src/lib/image.ts for why.
-      setPhoto(await fileToDownscaledDataUrl(file));
-      setPhotoFile(file);
-      // Exercise the real upload endpoint too; its key is unusable in Phase 1,
-      // so a failure here must not block the farmer.
-      void uploadProduceImage(file, `farmer-${Date.now()}`);
-    } catch (err) {
-      const reason = err instanceof Error ? err.message : "decode";
-      toast.error(
-        reason === "size"
-          ? "That image is over 10 MB."
-          : reason === "type"
-            ? "Use a JPEG, PNG or WebP image."
-            : "Couldn’t read that image.",
-      );
+
+    if (!ACCEPTED_IMAGE_TYPES.includes(file.type)) {
+      toast.error("Use a JPEG, PNG or WebP image.");
+      return;
     }
+
+    setPhotoFile(file);
+    // Object URL rather than a data URL: no decode/re-encode, and it's only ever
+    // shown in this form. Revoked when replaced or removed.
+    setPreview((current) => {
+      if (current) URL.revokeObjectURL(current);
+      return URL.createObjectURL(file);
+    });
+
+    setUploading(true);
+    // Real MinIO storage now — the returned key is retrievable, so unlike the
+    // Phase 1 mock this photo genuinely appears on the published listing.
+    const key = await uploadProduceImage(file, `farmer-${Date.now()}`);
+    setUploading(false);
+
+    if (!key) {
+      toast.error("Couldn’t upload that photo", {
+        description: "You can still publish the listing without it.",
+      });
+      return;
+    }
+    setImageKey(key);
   }
 
   function handleSuggest() {
     setError(null);
     startPricing(async () => {
-      const result = await suggestPriceAction(produceSlug, quantityKg, language);
+      const result = await suggestPriceAction(produceType, quantityKg, language);
       if (!result.ok) {
         setError(result.error);
         return;
@@ -102,10 +116,10 @@ export function NewListingForm({ language }: { language: "en" | "sw" }) {
     setError(null);
     startPublishing(async () => {
       const result = await createListingAction({
-        produceSlug,
+        produceType,
         quantityKg,
         pricePerKg,
-        photo,
+        imageKey,
       });
       if (!result.ok) {
         setError(result.error);
@@ -184,16 +198,18 @@ export function NewListingForm({ language }: { language: "en" | "sw" }) {
           <div className="flex items-center gap-3">
             <Button type="button" variant="outline" onClick={() => fileInput.current?.click()}>
               <Camera size={18} aria-hidden />
-              {photo ? "Change photo" : "Add a photo"}
+              {preview ? "Change photo" : "Add a photo"}
             </Button>
-            {photo ? (
+            {preview ? (
               <Button
                 type="button"
                 variant="ghost"
                 size="sm"
                 onClick={() => {
-                  setPhoto(undefined);
+                  if (preview) URL.revokeObjectURL(preview);
+                  setPreview(undefined);
                   setPhotoFile(undefined);
+                  setImageKey(undefined);
                   if (fileInput.current) fileInput.current.value = "";
                 }}
               >
@@ -203,7 +219,10 @@ export function NewListingForm({ language }: { language: "en" | "sw" }) {
             ) : null}
           </div>
           {photoFile ? (
-            <p className="text-xs text-muted-foreground">{photoFile.name}</p>
+            <p className="text-xs text-muted-foreground">
+              {photoFile.name}
+              {uploading ? " · uploading…" : imageKey ? " · uploaded" : null}
+            </p>
           ) : null}
         </div>
 
@@ -285,7 +304,7 @@ export function NewListingForm({ language }: { language: "en" | "sw" }) {
         <p className="text-sm font-medium text-foreground">Buyers will see</p>
         <div className="mt-3 overflow-hidden rounded-xl border border-border bg-card">
           <div className="aspect-[4/3] w-full">
-            <ProduceImage produceSlug={produceSlug || "tomatoes"} photo={photo} priority />
+            <ProduceImage produceType={produceType || "Produce"} imageUrl={preview} priority />
           </div>
           <div className="p-4">
             <p className="font-medium text-foreground">

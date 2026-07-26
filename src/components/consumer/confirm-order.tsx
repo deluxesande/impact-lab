@@ -3,27 +3,31 @@
 import { useState, useTransition } from "react";
 import Link from "next/link";
 import { motion } from "motion/react";
-import { CheckCircle, Loader, Truck } from "reicon-react";
+import { AlertTriangle, CheckCircle, Loader, Truck } from "reicon-react";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { EmptyState } from "@/components/shell/states";
 import { useCart } from "./cart-provider";
 import { placeOrderAction } from "@/lib/data/actions";
-import { produceBySlug } from "@/lib/data/produce";
+import { matchProduce } from "@/lib/data/produce";
+import { basketTotals, type OrderView } from "@/lib/data/view";
 import { formatKES, formatKg, formatRate, savingPercent } from "@/lib/format";
-import type { Order } from "@/lib/data/types";
 
 /**
  * Final review, then place the order.
  *
- * On success the cart is cleared, but the placed `Order` is held in local state so
- * the success screen can render totals from what the **server** actually recorded
- * — including any quantity the server clamped to available stock. Rendering the
- * old cart instead would risk showing a total the shopper was never charged.
+ * The backend models **one order per listing**, so a basket becomes N `Order`
+ * rows. The success screen renders those returned rows rather than the submitted
+ * cart, which matters because the server clamps quantities to live stock — showing
+ * the cart back would display a total the shopper was never charged.
+ *
+ * It can also partially succeed (someone else buys the last of something between
+ * our pre-flight check and the write), so `failed` lines are named explicitly
+ * rather than silently dropped.
  */
 export function ConfirmOrder() {
   const { items, ready, total, clear } = useCart();
-  const [placed, setPlaced] = useState<Order | null>(null);
+  const [placed, setPlaced] = useState<{ orders: OrderView[]; failed: string[] } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
 
@@ -35,19 +39,15 @@ export function ConfirmOrder() {
         setError(result.error);
         return;
       }
-      // Order first, then empty the cart. The success screen renders from
-      // `result.data` — what the server actually recorded, including any quantity
-      // it clamped to available stock — so clearing here loses nothing.
-      //
-      // Deliberately not in an effect keyed on `placed`: `clear` gets a fresh
-      // identity every render, so such an effect would re-run, commit a new cart
-      // snapshot, re-render, and loop forever.
+      // Record the server's result first, then empty the cart. Deliberately not in
+      // an effect keyed on `placed`: `clear` gets a fresh identity every render, so
+      // such an effect would re-run, commit a new cart snapshot, and loop forever.
       setPlaced(result.data);
       clear();
     });
   }
 
-  if (placed) return <Success order={placed} />;
+  if (placed) return <Success orders={placed.orders} failed={placed.failed} />;
 
   if (!ready) {
     return (
@@ -73,7 +73,7 @@ export function ConfirmOrder() {
   }
 
   const mallTotal = items.reduce((sum, i) => {
-    const mall = produceBySlug(i.produceSlug)?.mallPricePerKg ?? i.pricePerKg;
+    const mall = matchProduce(i.produceType)?.mallPricePerKg ?? i.pricePerKg;
     return sum + mall * i.quantityKg;
   }, 0);
   const saving = savingPercent(total, mallTotal);
@@ -85,15 +85,13 @@ export function ConfirmOrder() {
           <li key={item.listingId} className="flex items-center justify-between gap-4 p-4">
             <div className="min-w-0">
               <p className="truncate font-medium text-foreground">
-                {produceBySlug(item.produceSlug)?.name ?? item.produceSlug}
+                {matchProduce(item.produceType)?.name ?? item.produceType}
               </p>
               <p className="figure text-sm text-muted-foreground">
                 {formatKg(item.quantityKg)} × {formatRate(item.pricePerKg)}
               </p>
             </div>
-            <p className="figure font-medium text-foreground">
-              {formatKES(item.quantityKg * item.pricePerKg)}
-            </p>
+            <p className="figure font-medium text-foreground">{formatKES(item.lineTotal)}</p>
           </li>
         ))}
       </ul>
@@ -139,9 +137,8 @@ export function ConfirmOrder() {
   );
 }
 
-function Success({ order }: { order: Order }) {
-  const mallTotal = order.items.reduce((sum, i) => sum + i.mallPrice, 0);
-  const saving = savingPercent(order.totalPrice, mallTotal);
+function Success({ orders, failed }: { orders: OrderView[]; failed: string[] }) {
+  const { total, mallTotal, saving } = basketTotals(orders);
 
   return (
     <motion.div
@@ -164,26 +161,34 @@ function Success({ order }: { order: Order }) {
         The farmers have been notified. Delivery is simulated for this demo.
       </p>
 
+      {failed.length > 0 ? (
+        <p className="mt-4 flex items-start gap-2 rounded-lg bg-warning/15 px-3 py-2 text-left text-sm text-warning-foreground">
+          <AlertTriangle size={16} className="mt-0.5 shrink-0" aria-hidden />
+          {failed.join(" and ")} sold out before we could place{" "}
+          {failed.length === 1 ? "it" : "them"} — you weren’t charged for{" "}
+          {failed.length === 1 ? "it" : "them"}.
+        </p>
+      ) : null}
+
       <dl className="mt-6 space-y-2 border-t border-border pt-5 text-sm">
-        {order.items.map((item) => (
-          <div key={item.listingId} className="flex justify-between gap-4">
+        {orders.map(({ order, name }) => (
+          <div key={order.id} className="flex justify-between gap-4">
             <dt className="text-muted-foreground">
-              <span className="figure">{formatKg(item.quantityKg)}</span>{" "}
-              {produceBySlug(item.produceSlug)?.name ?? item.produceSlug}
+              <span className="figure">{formatKg(order.quantityKg)}</span> {name}
             </dt>
-            <dd className="figure text-foreground">{formatKES(item.lineTotal)}</dd>
+            <dd className="figure text-foreground">{formatKES(order.totalPrice)}</dd>
           </div>
         ))}
         <div className="flex justify-between gap-4 border-t border-border pt-2 font-medium">
           <dt className="text-foreground">Total</dt>
-          <dd className="figure text-foreground">{formatKES(order.totalPrice)}</dd>
+          <dd className="figure text-foreground">{formatKES(total)}</dd>
         </div>
       </dl>
 
       {saving !== null ? (
         <p className="mt-4 rounded-lg bg-primary-tint px-3 py-2 text-sm font-medium text-primary">
-          You saved <span className="figure">{formatKES(mallTotal - order.totalPrice)}</span>{" "}
-          versus the supermarket — <span className="figure">{saving}%</span> less.
+          You saved <span className="figure">{formatKES(mallTotal - total)}</span> versus
+          the supermarket — <span className="figure">{saving}%</span> less.
         </p>
       ) : null}
 

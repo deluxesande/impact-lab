@@ -3,7 +3,7 @@
 import { motion } from "motion/react";
 import { GraphDown, GraphUp, InfoCircle, Minus } from "reicon-react";
 import { formatKES, formatRate } from "@/lib/format";
-import type { PriceSuggestion } from "@/lib/data/types";
+import type { PriceSuggestion } from "@/lib/data/actions";
 import { cn } from "@/lib/utils";
 
 /**
@@ -37,7 +37,8 @@ export function PriceCard({
   className?: string;
 }) {
   const { pricePerKg, source, rationale, market, trend } = suggestion;
-  const trendInfo = trend ? TREND[trend] : undefined;
+  // `trend` is optional on PricingData and may be an unrecognised string.
+  const trendInfo = trend && trend in TREND ? TREND[trend as keyof typeof TREND] : undefined;
   const total = pricePerKg * quantityKg;
 
   return (
@@ -60,12 +61,12 @@ export function PriceCard({
         <span
           className={cn(
             "inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium",
-            source === "agent"
+            source === "model"
               ? "bg-primary-tint text-primary"
               : "bg-muted text-muted-foreground",
           )}
         >
-          {source === "agent" ? "AI suggestion" : "Market reference"}
+          {source === "model" ? "AI suggestion" : "Market estimate"}
         </span>
       </div>
 
@@ -103,8 +104,8 @@ export function PriceCard({
       ) : (
         <p className="mt-4 flex items-start gap-2 border-t border-border pt-4 text-sm leading-relaxed text-muted-foreground">
           <InfoCircle size={16} className="mt-0.5 shrink-0" aria-hidden />
-          Based on our market reference for this produce. You can adjust the rate
-          before publishing.
+          Estimated from market rates for this produce — no AI model is configured.
+          You can adjust the rate before publishing.
         </p>
       )}
     </motion.div>

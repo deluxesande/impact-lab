@@ -1,4 +1,4 @@
-import type { CartItem } from "@/lib/data/types";
+import type { CartItem } from "@/lib/ai/types";
 
 /**
  * Cart store, kept outside React and read via `useSyncExternalStore`.
@@ -40,12 +40,16 @@ function isCartItem(value: unknown): value is CartItem {
   const v = value as Record<string, unknown>;
   return (
     typeof v.listingId === "string" &&
-    typeof v.produceSlug === "string" &&
+    // The backend's CartItem carries free-text `produceType`, not a catalogue
+    // slug, and a precomputed `lineTotal`.
+    typeof v.produceType === "string" &&
     typeof v.quantityKg === "number" &&
     Number.isFinite(v.quantityKg) &&
     v.quantityKg > 0 &&
     typeof v.pricePerKg === "number" &&
-    Number.isFinite(v.pricePerKg)
+    Number.isFinite(v.pricePerKg) &&
+    typeof v.lineTotal === "number" &&
+    Number.isFinite(v.lineTotal)
   );
 }
 
@@ -78,7 +82,8 @@ function sameItems(a: CartItem[], b: CartItem[]): boolean {
       return (
         x.listingId === y.listingId &&
         x.quantityKg === y.quantityKg &&
-        x.pricePerKg === y.pricePerKg
+        x.pricePerKg === y.pricePerKg &&
+        x.lineTotal === y.lineTotal
       );
     })
   );
@@ -118,6 +123,18 @@ export function getServerSnapshot(): CartState {
 /** Avoid float drift from repeated 0.5 kg steps. */
 const round = (kg: number) => Math.round(kg * 100) / 100;
 
+/**
+ * Keep `lineTotal` in step with `quantityKg`.
+ *
+ * The backend computes `lineTotal` when it builds the cart, so any local quantity
+ * edit must recompute it — otherwise the basket subtotal and the line figures
+ * disagree, and the discrepancy only surfaces at checkout.
+ */
+const recomputeLine = (item: CartItem): CartItem => ({
+  ...item,
+  lineTotal: Math.round(item.quantityKg * item.pricePerKg),
+});
+
 export function addItem(item: CartItem): void {
   const { items } = getSnapshot();
   const existing = items.find((i) => i.listingId === item.listingId);
@@ -125,7 +142,7 @@ export function addItem(item: CartItem): void {
     existing
       ? items.map((i) =>
           i.listingId === item.listingId
-            ? { ...i, quantityKg: round(i.quantityKg + item.quantityKg) }
+            ? recomputeLine({ ...i, quantityKg: round(i.quantityKg + item.quantityKg) })
             : i,
         )
       : [...items, item],
@@ -143,7 +160,9 @@ export function setItemQuantity(listingId: string, quantityKg: number): void {
     quantityKg <= 0
       ? items.filter((i) => i.listingId !== listingId)
       : items.map((i) =>
-          i.listingId === listingId ? { ...i, quantityKg: round(quantityKg) } : i,
+          i.listingId === listingId
+            ? recomputeLine({ ...i, quantityKg: round(quantityKg) })
+            : i,
         ),
   );
 }

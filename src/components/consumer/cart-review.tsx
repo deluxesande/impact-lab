@@ -8,7 +8,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { EmptyState } from "@/components/shell/states";
 import { ProduceImage } from "@/components/produce/produce-image";
 import { useCart } from "./cart-provider";
-import { produceBySlug } from "@/lib/data/produce";
+import { matchProduce } from "@/lib/data/produce";
 import { formatKES, formatKg, formatRate, savingPercent } from "@/lib/format";
 
 /** Kilogram step for the +/− controls. Nobody buys 0.1 kg of kale. */
@@ -60,7 +60,7 @@ export function CartReview() {
   }
 
   const mallTotal = items.reduce((sum, i) => {
-    const mall = produceBySlug(i.produceSlug)?.mallPricePerKg ?? i.pricePerKg;
+    const mall = matchProduce(i.produceType)?.mallPricePerKg ?? i.pricePerKg;
     return sum + mall * i.quantityKg;
   }, 0);
   const saving = savingPercent(total, mallTotal);
@@ -70,7 +70,8 @@ export function CartReview() {
       <ul className="space-y-3">
         <AnimatePresence initial={false}>
           {items.map((item) => {
-            const produce = produceBySlug(item.produceSlug);
+            const produce = matchProduce(item.produceType);
+            const name = produce?.name ?? item.produceType;
             return (
               <motion.li
                 key={item.listingId}
@@ -86,12 +87,12 @@ export function CartReview() {
               >
                 <div className="flex min-w-0 items-center gap-4 sm:flex-1">
                   <div className="size-14 shrink-0 overflow-hidden rounded-lg">
-                    <ProduceImage produceSlug={item.produceSlug} />
+                    <ProduceImage produceType={item.produceType} />
                   </div>
 
                   <div className="min-w-0 flex-1">
                     <p className="truncate font-medium text-foreground">
-                      {produce?.name ?? item.produceSlug}
+                      {name}
                     </p>
                     <p className="figure text-sm text-muted-foreground">
                       {formatRate(item.pricePerKg)}
@@ -103,7 +104,7 @@ export function CartReview() {
                   <div className="flex items-center gap-1 rounded-lg border border-border p-0.5">
                     <button
                       type="button"
-                      aria-label={`Reduce ${produce?.name ?? "quantity"}`}
+                      aria-label={`Reduce ${name}`}
                       onClick={() => setQuantity(item.listingId, item.quantityKg - STEP)}
                       className="focus-visible:ring-ring flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:outline-none"
                     >
@@ -114,7 +115,7 @@ export function CartReview() {
                     </span>
                     <button
                       type="button"
-                      aria-label={`Increase ${produce?.name ?? "quantity"}`}
+                      aria-label={`Increase ${name}`}
                       onClick={() => setQuantity(item.listingId, item.quantityKg + STEP)}
                       className="focus-visible:ring-ring flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:outline-none"
                     >
@@ -128,7 +129,7 @@ export function CartReview() {
 
                   <button
                     type="button"
-                    aria-label={`Remove ${produce?.name ?? "item"}`}
+                    aria-label={`Remove ${name}`}
                     onClick={() => remove(item.listingId)}
                     className="focus-visible:ring-ring flex size-8 shrink-0 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive focus-visible:ring-2 focus-visible:outline-none"
                   >
