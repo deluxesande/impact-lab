@@ -55,23 +55,26 @@ The production image uses Next.js standalone output and runs as a non-root
 user. Compose starts it detached and restarts it after crashes or VPS reboots.
 
 ```bash
-cp .env.example .env.local
-# Fill in production keys and replace every default password in .env.local.
+cp .env.example .env
+# Fill in production keys and replace every default password in .env.
+chmod 600 .env
 
 sudo systemctl enable --now docker
-docker compose --env-file .env.local up -d --build
-docker compose --env-file .env.local ps
+docker compose --env-file .env up -d --build
+docker compose --env-file .env ps
 ```
 
 Leaving SSH or pressing `Ctrl+C` after viewing logs does not stop the services:
 
 ```bash
-docker compose --env-file .env.local logs -f app
+docker compose --env-file .env logs -f app
 ```
 
-The app listens on port `3000` by default. Set `APP_PORT` in `.env.local` to
-change the host port. Postgres and MinIO bind only to localhost; expose the app
-and object storage through a TLS reverse proxy such as Caddy or Nginx.
+The app listens on port `3000` by default. Set `APP_PORT` in `.env` to change
+the host port. Postgres and MinIO bind only to localhost; expose the app and
+object storage through a TLS reverse proxy such as Caddy or Nginx. To use an
+existing `.env.local` instead, prefix commands with `APP_ENV_FILE=.env.local`
+and pass `--env-file .env.local`.
 
 To deploy an update, pull the new code and run the same `up` command again.
 
