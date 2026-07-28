@@ -1,6 +1,6 @@
 # Local / Linode infrastructure for the Impact Lab backend.
 #
-#   docker compose --env-file .env.local up -d --build
+#   docker compose --env-file .env up -d --build
 #   bun run db:migrate
 #
 # Postgres backs conversations, messages, and the agent_runs refinement log.
@@ -20,7 +20,7 @@ services:
     container_name: impact-lab-app
     restart: unless-stopped
     env_file:
-      - .env.local
+      - ${APP_ENV_FILE:-.env}
     environment:
       NODE_ENV: production
       DATABASE_URL: postgres://${POSTGRES_USER:-impactlab}:${POSTGRES_PASSWORD:-impactlab}@postgres:5432/${POSTGRES_DB:-impactlab}
