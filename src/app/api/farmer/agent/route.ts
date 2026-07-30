@@ -5,8 +5,7 @@ import {
   appendMessage,
   logAgentRun,
 } from "@/lib/db/repo";
-import { runSupervisor } from "@/lib/ai/graphs/supervisor";
-import { withTimeout, AI_TIMEOUTS, TimeoutError } from "@/lib/ai/timeout";
+import { runSupervisorWithBudget } from "@/lib/ai/run-with-budget";
 import type {
   FarmerAgentRequest,
   FarmerAgentResponse,
@@ -107,54 +106,11 @@ export async function POST(
       imageKey,
     });
 
-    // Run the supervisor agent (intent → pricing graph or advisory LLM), under
-    // an overall budget. A timeout degrades to a graceful reply rather than a
-    // 500 — the farmer always gets an answer, and the run is still logged.
-    // Late-completion observers only attach when the timeout branch fires, so
-    // fast-path completions avoid the unnecessary console.warn overhead.
-    const startedAt = Date.now();
-    const supervisorPromise = runSupervisor(message, language);
-    let result;
-    try {
-      result = await withTimeout(
-        supervisorPromise,
-        AI_TIMEOUTS.agent,
-        "agent",
-      );
-    } catch (err) {
-      if (err instanceof TimeoutError) {
-        supervisorPromise.then(
-          (lateResult) => {
-            console.warn("[agent] supervisor completed after timeout", {
-              latencyMs: Date.now() - startedAt,
-              source: lateResult.source,
-            });
-          },
-          (lateError) => {
-            console.warn("[agent] supervisor failed after timeout", {
-              error: String(lateError).slice(0, 200),
-            });
-          },
-        );
-        result = {
-          intent: "advisory" as const,
-          source: "timeout",
-          model: undefined,
-          toolCalls: [{ error: "agent budget exceeded" }],
-          reply: {
-            role: "assistant" as const,
-            intent: "advisory" as const,
-            content:
-              language === "sw"
-                ? "Samahani, imechukua muda mrefu kujibu. Tafadhali jaribu tena."
-                : "Sorry, that took too long to answer. Please try again.",
-          },
-        };
-      } else {
-        throw err;
-      }
-    }
-    const latencyMs = Date.now() - startedAt;
+    // Run the supervisor agent (intent → pricing graph or advisory LLM) under
+    // the overall budget. A timeout degrades to a graceful reply rather than a
+    // 500 — the farmer always gets an answer, and the run is still logged. The
+    // shared helper keeps this behaviour identical to the web action.
+    const { result, latencyMs } = await runSupervisorWithBudget(message, language);
     const reply = result.reply;
 
     const assistantMessageId = await appendMessage({

@@ -81,6 +81,19 @@ function sign(
   return { signature, timestamp };
 }
 
+/**
+ * Normalise an error thrown during a Shamba fetch/read: an abort (from the
+ * timeout controller) becomes a standardized `ShambaApiError`; anything else is
+ * re-thrown unchanged. Consolidates the identical mapping the fetch, text, and
+ * json steps each needed.
+ */
+function rethrowShamba(err: unknown, method: string, path: string): never {
+  if (err instanceof Error && err.name === "AbortError") {
+    throw new ShambaApiError(0, `Shamba ${method} ${path} timed out after ${AI_TIMEOUTS.shamba}ms`);
+  }
+  throw err;
+}
+
 async function request<T>(
   method: "GET" | "POST",
   path: string,
@@ -122,10 +135,7 @@ async function request<T>(
     });
   } catch (err) {
     clearTimeout(timer);
-    if (err instanceof Error && err.name === "AbortError") {
-      throw new ShambaApiError(0, `Shamba ${method} ${path} timed out after ${AI_TIMEOUTS.shamba}ms`);
-    }
-    throw err;
+    rethrowShamba(err, method, path);
   }
 
   try {
@@ -134,20 +144,14 @@ async function request<T>(
       try {
         text = await res.text();
       } catch (err) {
-        if (err instanceof Error && err.name === "AbortError") {
-          throw new ShambaApiError(0, `Shamba ${method} ${path} timed out after ${AI_TIMEOUTS.shamba}ms`);
-        }
-        throw err;
+        rethrowShamba(err, method, path);
       }
       throw new ShambaApiError(res.status, `Shamba ${method} ${path} -> ${res.status}: ${text.slice(0, 200)}`);
     }
     try {
       return (await res.json()) as T;
     } catch (err) {
-      if (err instanceof Error && err.name === "AbortError") {
-        throw new ShambaApiError(0, `Shamba ${method} ${path} timed out after ${AI_TIMEOUTS.shamba}ms`);
-      }
-      throw err;
+      rethrowShamba(err, method, path);
     }
   } finally {
     clearTimeout(timer);

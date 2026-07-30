@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { requireUserRow } from "@/lib/auth/current-user-row";
 import {
-  appendMessage,
+  appendTurnPair,
   createListing,
   createOrder,
   getListing,
@@ -14,7 +14,7 @@ import {
 import { runCartGraph } from "@/lib/ai/graphs/cart";
 import { runPricingGraph } from "@/lib/ai/graphs/pricing";
 import { runSupervisor } from "@/lib/ai/graphs/supervisor";
-import { AI_TIMEOUTS, TimeoutError, withTimeout } from "@/lib/ai/timeout";
+import { runSupervisorWithBudget } from "@/lib/ai/run-with-budget";
 import { withProduceNames } from "./queries";
 import { matchProduce } from "./produce";
 import type { CartItem, FarmerAgentReply, Language, Order, PricingData } from "@/lib/ai/types";
@@ -355,6 +355,17 @@ export async function askAdvisorAction(
 ): Promise<ActionResult<AdvisorTurn>> {
   const { row } = await requireUserRow("farmer");
 
+  // Validate BEFORE any coercion. A Server Action is a public POST, so the
+  // arguments are untrusted: guard `clientSessionId` and confirm `rawMessage`
+  // is a string before calling `.trim()`, or a malformed call would throw a
+  // TypeError (an opaque 500) instead of returning a friendly error.
+  if (typeof clientSessionId !== "string" || clientSessionId.length === 0) {
+    return { ok: false, error: "Missing chat session. Reload and try again." };
+  }
+  if (typeof rawMessage !== "string") {
+    return { ok: false, error: "Type a question first." };
+  }
+
   const messageText = rawMessage.trim();
   if (!messageText) {
     return { ok: false, error: "Type a question first." };
@@ -365,57 +376,28 @@ export async function askAdvisorAction(
       error: `Keep it under ${MAX_ADVISOR_MESSAGE} characters.`,
     };
   }
-  if (typeof clientSessionId !== "string" || clientSessionId.length === 0) {
-    return { ok: false, error: "Missing chat session. Reload and try again." };
-  }
 
   // Namespace the thread to this farmer. Never trust the client id alone.
   const sessionKey = `advice:${row.id}:${clientSessionId}`;
 
   try {
-    const conversation = await getOrCreateConversation(sessionKey, language);
-
-    await appendMessage({
-      conversationId: conversation.id,
-      role: "user",
-      content: messageText,
-    });
-
-    // Bound the whole agent run. A timeout degrades to a friendly reply rather
-    // than an error — the farmer always gets an answer, and the turn is logged.
-    const startedAt = Date.now();
-    const supervisorPromise = runSupervisor(messageText, language);
-    let result;
-    try {
-      result = await withTimeout(supervisorPromise, AI_TIMEOUTS.agent, "agent");
-    } catch (err) {
-      if (!(err instanceof TimeoutError)) throw err;
-      // Don't leave a rejected promise unobserved if it later settles.
-      supervisorPromise.catch(() => {});
-      result = {
-        intent: "advisory" as const,
-        source: "timeout",
-        model: undefined,
-        toolCalls: [{ error: "agent budget exceeded" }] as unknown[],
-        reply: {
-          role: "assistant" as const,
-          intent: "advisory" as const,
-          content:
-            language === "sw"
-              ? "Samahani, imechukua muda mrefu kujibu. Tafadhali jaribu tena."
-              : "Sorry, that took too long to answer. Please try again.",
-        },
-      };
-    }
-
-    const latencyMs = Date.now() - startedAt;
+    // Run the agent under budget FIRST, before persisting anything. Writing the
+    // user turn up front risks an orphan: if the supervisor then fails, the
+    // outer catch returns an error but a lone user message is already committed
+    // and would resurface on reload. (Timeouts don't throw — they degrade to a
+    // reply — so those are still persisted, matching the API route.)
+    const { result, latencyMs } = await runSupervisorWithBudget(messageText, language);
     const reply = result.reply;
 
-    const assistantMessageId = await appendMessage({
+    const conversation = await getOrCreateConversation(sessionKey, language);
+
+    // Persist both turns atomically: either the pair lands or neither does, so a
+    // failure between the two inserts can't leave the user message orphaned.
+    const { assistantMessageId } = await appendTurnPair({
       conversationId: conversation.id,
-      role: "assistant",
-      content: reply.content,
-      data: reply.data,
+      userContent: messageText,
+      assistantContent: reply.content,
+      assistantData: reply.data,
     });
 
     await logAgentRun({

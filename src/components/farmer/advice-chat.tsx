@@ -13,7 +13,8 @@ import { ArrowUp, InfoCircle, Leaf, Loader, Sparkle } from "reicon-react";
 import { Button } from "@/components/ui/button";
 import { askAdvisorAction } from "@/lib/data/actions";
 import { cn } from "@/lib/utils";
-import type { ConversationMessage, Language } from "@/lib/ai/types";
+import type { AdvisorMessage } from "@/lib/data/queries";
+import type { Language } from "@/lib/ai/types";
 
 /**
  * Farmer advisory chat — the web co-pilot for farming questions (planting,
@@ -46,14 +47,15 @@ type Turn = {
   aiBacked?: boolean;
 };
 
-function toTurns(messages: ConversationMessage[]): Turn[] {
+function toTurns(messages: AdvisorMessage[]): Turn[] {
   return messages.map((m) => ({
     id: m.id,
     role: m.role,
     content: m.content,
-    // Persisted history doesn't record provenance per message; assume a model
-    // answered (the honest default for stored advisory turns).
-    aiBacked: m.role === "assistant" ? true : undefined,
+    // Provenance is recovered from agent_runs.model_used via advisorHistory, so
+    // a reloaded heuristic/timeout reply stays labelled as a fallback rather
+    // than being assumed AI. User turns carry no provenance.
+    ...(m.role === "assistant" ? { aiBacked: m.aiBacked ?? false } : {}),
   }));
 }
 
@@ -64,14 +66,13 @@ export function AdviceChat({
 }: {
   sessionId: string;
   language: Language;
-  initialMessages: ConversationMessage[];
+  initialMessages: AdvisorMessage[];
 }) {
   const [turns, setTurns] = useState<Turn[]>(() => toTurns(initialMessages));
   const [text, setText] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
 
-  const threadRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const endRef = useRef<HTMLDivElement>(null);
 
@@ -140,7 +141,6 @@ export function AdviceChat({
     <div className="flex min-h-0 flex-1 flex-col">
       {/* Thread */}
       <div
-        ref={threadRef}
         className="min-h-0 flex-1 overflow-y-auto"
         aria-live="polite"
         aria-busy={pending}
@@ -188,8 +188,12 @@ export function AdviceChat({
                 if (error) setError(null);
               }}
               onKeyDown={(e) => {
-                // Enter sends; Shift+Enter inserts a newline.
-                if (e.key === "Enter" && !e.shiftKey) {
+                // Enter sends; Shift+Enter inserts a newline. Ignore Enter while
+                // an IME composition is active (e.g. converting Japanese/Chinese
+                // input) — there, Enter commits the candidate, not the message.
+                // `keyCode === 229` is the legacy signal some browsers still use.
+                const composing = e.nativeEvent.isComposing || e.keyCode === 229;
+                if (e.key === "Enter" && !e.shiftKey && !composing) {
                   e.preventDefault();
                   submit(text);
                 }

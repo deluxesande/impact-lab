@@ -56,6 +56,16 @@ export async function farmerOrderViews(farmerId: string): Promise<OrderView[]> {
 }
 
 /**
+ * A restored advisory-chat turn. Extends the contract message with `aiBacked`,
+ * derived from persisted provenance so a reloaded reply is labelled honestly
+ * (model-backed vs heuristic/timeout fallback) rather than assumed to be AI.
+ */
+export type AdvisorMessage = ConversationMessage & { aiBacked?: boolean };
+
+/** Provenance values that mean "no model actually answered". */
+const NON_AI_SOURCES = new Set(["heuristic", "timeout"]);
+
+/**
  * Prior advisory-chat turns for a farmer's session, oldest first.
  *
  * The caller passes the **user-scoped** session key (`advice:<userId>:<clientId>`,
@@ -64,23 +74,28 @@ export async function farmerOrderViews(farmerId: string): Promise<OrderView[]> {
  *
  * Advisory turns never carry images, so `imageKey` is simply dropped — no MinIO
  * presigning is needed here, unlike the listing read path.
+ *
+ * `aiBacked` is recovered from `agent_runs.model_used`: a model provider name
+ * means a real model answered; 'heuristic'/'timeout' (or a missing run) means it
+ * did not. Only assistant turns carry it.
  */
 export async function advisorHistory(
   sessionKey: string,
-): Promise<ConversationMessage[]> {
+): Promise<AdvisorMessage[]> {
   const record = await getConversationBySession(sessionKey);
   if (!record) return [];
   // Drop the private `imageKey` (advisory turns carry none anyway) by projecting
-  // only the fields the client contract exposes.
-  return record.messages.map(
-    (m): ConversationMessage => ({
-      id: m.id,
-      role: m.role,
-      content: m.content,
-      ...(m.data ? { data: m.data } : {}),
-      createdAt: m.createdAt,
-    }),
-  );
+  // only the fields the client contract exposes, plus honest provenance.
+  return record.messages.map((m): AdvisorMessage => ({
+    id: m.id,
+    role: m.role,
+    content: m.content,
+    ...(m.data ? { data: m.data } : {}),
+    ...(m.role === "assistant"
+      ? { aiBacked: m.modelUsed ? !NON_AI_SOURCES.has(m.modelUsed) : false }
+      : {}),
+    createdAt: m.createdAt,
+  }));
 }
 
 /**

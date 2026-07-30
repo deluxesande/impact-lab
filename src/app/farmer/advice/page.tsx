@@ -49,7 +49,11 @@ export default async function AdvicePage({
             Practical answers on planting, pests, and storage.
           </p>
         </div>
-        <LanguageToggle language={language} basePath="/farmer/advice" />
+        <LanguageToggle
+          language={language}
+          basePath="/farmer/advice"
+          label="Language for advisor replies"
+        />
       </div>
 
       {/* Fill the viewport below the 3.5rem sticky header so the composer pins

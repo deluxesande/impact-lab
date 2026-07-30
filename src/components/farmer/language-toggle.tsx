@@ -13,6 +13,10 @@ import { cn } from "@/lib/utils";
  *
  * `basePath` lets a surface point the toggle at its own route (e.g. the advisory
  * chat). It defaults to /farmer/new so existing call sites are unchanged.
+ *
+ * `label` sets the group's accessible name; it defaults to the price-suggestion
+ * wording so existing call sites are unchanged, and the advisory chat overrides
+ * it so screen-reader users hear the right context.
  */
 const OPTIONS = [
   { value: "en", label: "English" },
@@ -22,9 +26,11 @@ const OPTIONS = [
 export function LanguageToggle({
   language,
   basePath = "/farmer/new",
+  label = "Language for price suggestions",
 }: {
   language: "en" | "sw";
   basePath?: string;
+  label?: string;
 }) {
   return (
     <div>
@@ -33,7 +39,7 @@ export function LanguageToggle({
       </p>
       <div
         role="group"
-        aria-label="Language for price suggestions"
+        aria-label={label}
         className="inline-flex rounded-lg border border-border bg-card p-0.5"
       >
         {OPTIONS.map((option) => {
