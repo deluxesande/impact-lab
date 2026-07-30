@@ -112,3 +112,9 @@ jobs:
           # The pinned action reads its config from .gitleaks.toml at the repo
           # root. No GITLEAKS_LICENSE is needed for public repos.
           GITLEAKS_CONFIG: .gitleaks.toml
+          # Required by the action to scan pull requests (it reads PR metadata
+          # via the API). This is the auto-created, job-scoped token GitHub
+          # Actions injects at runtime — NOT a personal access token, and never
+          # stored in the repo. `persist-credentials: false` above still keeps it
+          # out of .git/config.
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
