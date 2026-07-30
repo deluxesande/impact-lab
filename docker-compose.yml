@@ -1,6 +1,6 @@
 # Local / Linode infrastructure for the Impact Lab backend.
 #
-#   docker compose up -d
+#   docker compose --env-file .env up -d --build
 #   bun run db:migrate
 #
 # Postgres backs conversations, messages, and the agent_runs refinement log.
@@ -8,6 +8,33 @@
 # whole stack comes up with one command and teammates don't need a second pass.
 
 services:
+  app:
+    build:
+      context: .
+      args:
+        NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: ${NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY}
+        NEXT_PUBLIC_CLERK_SIGN_IN_URL: ${NEXT_PUBLIC_CLERK_SIGN_IN_URL:-/sign-in}
+        NEXT_PUBLIC_CLERK_SIGN_UP_URL: ${NEXT_PUBLIC_CLERK_SIGN_UP_URL:-/sign-up}
+        NEXT_PUBLIC_CLERK_AFTER_SIGN_IN_URL: ${NEXT_PUBLIC_CLERK_AFTER_SIGN_IN_URL:-/}
+        NEXT_PUBLIC_CLERK_AFTER_SIGN_UP_URL: ${NEXT_PUBLIC_CLERK_AFTER_SIGN_UP_URL:-/}
+    container_name: impact-lab-app
+    restart: unless-stopped
+    env_file:
+      - ${APP_ENV_FILE:-.env}
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgres://${POSTGRES_USER:-impactlab}:${POSTGRES_PASSWORD:-impactlab}@postgres:5432/${POSTGRES_DB:-impactlab}
+      MINIO_ENDPOINT: minio
+      MINIO_PORT: 9000
+      MINIO_USE_SSL: "false"
+    ports:
+      - "${APP_PORT:-3000}:3000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+
   postgres:
     image: postgres:16-alpine
     container_name: impact-lab-postgres
@@ -17,7 +44,7 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-impactlab}
       POSTGRES_DB: ${POSTGRES_DB:-impactlab}
     ports:
-      - "${POSTGRES_PORT:-5432}:5432"
+      - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
     volumes:
       - postgres-data:/var/lib/postgresql/data
     healthcheck:
@@ -36,8 +63,8 @@ services:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
     ports:
-      - "${MINIO_PORT:-9000}:9000"      # S3 API
-      - "${MINIO_CONSOLE_PORT:-9001}:9001"  # web console
+      - "127.0.0.1:${MINIO_PORT:-9000}:9000"      # S3 API
+      - "127.0.0.1:${MINIO_CONSOLE_PORT:-9001}:9001"  # web console
     volumes:
       - minio-data:/data
     healthcheck:

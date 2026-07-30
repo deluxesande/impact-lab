@@ -22,6 +22,9 @@ export const FARMER_NAV: NavItem[] = [
 export const CONSUMER_NAV: NavItem[] = [
   { href: "/consumer", label: "Browse", icon: Home },
   { href: "/consumer/order", label: "Order", icon: ChatDots },
+  // Order history. Without this a placed order left no trace in the UI once the
+  // basket cleared, which reads like a failed save.
+  { href: "/consumer/orders", label: "My orders", icon: Cart },
 ];
 
 export type Surface = "farmer" | "consumer" | "public";

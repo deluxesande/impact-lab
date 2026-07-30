@@ -193,6 +193,9 @@ function Success({ orders, failed }: { orders: OrderView[]; failed: string[] }) 
       ) : null}
 
       <div className="mt-6 flex flex-wrap justify-center gap-3">
+        <Button asChild>
+          <Link href="/consumer/orders">View your orders</Link>
+        </Button>
         <Button asChild variant="outline">
           <Link href="/consumer">Keep shopping</Link>
         </Button>

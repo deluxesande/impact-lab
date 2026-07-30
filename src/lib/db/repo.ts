@@ -448,6 +448,24 @@ export async function listOrdersForFarmer(farmerId: string): Promise<Order[]> {
   return rows.map(mapOrder);
 }
 
+/**
+ * Orders a given consumer has placed (their own order history).
+ *
+ * Mirror of `listOrdersForFarmer`. Added for the web consumer surface: without it
+ * an order vanished after checkout — the basket clears on success and the
+ * confirmation screen is transient, so a shopper had no way to see that anything
+ * had been recorded, and reasonably concluded nothing had saved.
+ */
+export async function listOrdersForConsumer(consumerId: string): Promise<Order[]> {
+  const sql = getSql();
+  const rows = await sql<OrderRow[]>`
+    SELECT * FROM orders
+    WHERE consumer_id = ${consumerId}
+    ORDER BY created_at DESC
+  `;
+  return rows.map(mapOrder);
+}
+
 /* -------------------------------------------------------------------------- */
 /* AI task-graph runs (observability for /api/ai/price, /api/ai/cart)         */
 /* -------------------------------------------------------------------------- */
@@ -486,5 +504,4 @@ export async function logAiRun(input: LogAiRunInput): Promise<void> {
     `;
   } catch (err) {
     console.warn("[ai_runs] log failed:", String(err).slice(0, 160));
-  }
-}
+  }}
