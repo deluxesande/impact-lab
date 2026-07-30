@@ -1,4 +1,5 @@
 import {
+  getConversationBySession,
   getListing,
   listActiveListings,
   listFarmerListings,
@@ -6,7 +7,7 @@ import {
 } from "@/lib/db/repo";
 import { presentListings } from "@/lib/api/present-listing";
 import { toListingViews, toOrderView, type ListingView, type OrderView } from "./view";
-import type { Order } from "@/lib/ai/types";
+import type { ConversationMessage, Order } from "@/lib/ai/types";
 
 /**
  * Read side of the web surface.
@@ -51,6 +52,34 @@ export async function farmerListingViews(farmerId: string): Promise<ListingView[
 export async function farmerOrderViews(farmerId: string): Promise<OrderView[]> {
   const orders = await listOrdersForFarmer(farmerId);
   return withProduceNames(orders);
+}
+
+/**
+ * Prior advisory-chat turns for a farmer's session, oldest first.
+ *
+ * The caller passes the **user-scoped** session key (`advice:<userId>:<clientId>`,
+ * the same one `askAdvisorAction` writes under), so one farmer can never load
+ * another's thread. Returns `[]` for a session with no history yet.
+ *
+ * Advisory turns never carry images, so `imageKey` is simply dropped — no MinIO
+ * presigning is needed here, unlike the listing read path.
+ */
+export async function advisorHistory(
+  sessionKey: string,
+): Promise<ConversationMessage[]> {
+  const record = await getConversationBySession(sessionKey);
+  if (!record) return [];
+  // Drop the private `imageKey` (advisory turns carry none anyway) by projecting
+  // only the fields the client contract exposes.
+  return record.messages.map(
+    (m): ConversationMessage => ({
+      id: m.id,
+      role: m.role,
+      content: m.content,
+      ...(m.data ? { data: m.data } : {}),
+      createdAt: m.createdAt,
+    }),
+  );
 }
 
 /** Resolve produce names for a set of orders, de-duplicating listing lookups. */

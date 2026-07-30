@@ -2,13 +2,22 @@
 
 import { revalidatePath } from "next/cache";
 import { requireUserRow } from "@/lib/auth/current-user-row";
-import { createListing, createOrder, getListing, listActiveListings } from "@/lib/db/repo";
+import {
+  appendMessage,
+  createListing,
+  createOrder,
+  getListing,
+  getOrCreateConversation,
+  listActiveListings,
+  logAgentRun,
+} from "@/lib/db/repo";
 import { runCartGraph } from "@/lib/ai/graphs/cart";
 import { runPricingGraph } from "@/lib/ai/graphs/pricing";
 import { runSupervisor } from "@/lib/ai/graphs/supervisor";
+import { AI_TIMEOUTS, TimeoutError, withTimeout } from "@/lib/ai/timeout";
 import { withProduceNames } from "./queries";
 import { matchProduce } from "./produce";
-import type { CartItem, Language, Order, PricingData } from "@/lib/ai/types";
+import type { CartItem, FarmerAgentReply, Language, Order, PricingData } from "@/lib/ai/types";
 import type { OrderView } from "./view";
 
 /**
@@ -299,6 +308,138 @@ export async function placeOrderAction(
     return { ok: true, data: { orders: await withProduceNames(placed), failed } };
   } catch (err) {
     return { ok: false, error: message(err, "Couldn’t place that order.") };
+  }
+}
+
+/* -------------------------------------------------------------------------- */
+/* Farmer advisory chat                                                       */
+/* -------------------------------------------------------------------------- */
+
+/** Same cap the /api/farmer/agent route enforces — bounds token cost + flooding. */
+const MAX_ADVISOR_MESSAGE = 2000;
+
+export type AdvisorTurn = {
+  /** Conversation this exchange was persisted under. */
+  conversationId: string;
+  reply: FarmerAgentReply;
+  /**
+   * Whether a real model produced the reply. False when the supervisor fell back
+   * to its heuristic (no provider key) or the run timed out. The UI must label
+   * honestly and never claim AI it did not use — see price-card.tsx.
+   */
+  aiBacked: boolean;
+};
+
+/**
+ * Ask the farming advisor a question — the web co-pilot's advisory chat.
+ *
+ * Mirrors POST /api/farmer/agent (the Android contract) but runs `runSupervisor`
+ * **in-process**, the same way every other web Server Action reaches the graphs.
+ * It persists both turns and an `agent_runs` row so history survives reloads and
+ * the refinement dataset keeps growing, identical to the route.
+ *
+ * SECURITY — the conversation key is namespaced to the authenticated user
+ * (`advice:<users.id>:<clientSessionId>`), not the raw client value. Conversations
+ * are keyed only by `session_id` and `getConversation` is not user-scoped, so a
+ * bare client id would let one farmer append to — or later read — another's
+ * thread just by guessing it. Binding the key to `row.id` closes that.
+ *
+ * `requireUserRow("farmer")` runs **outside** the try/catch: it signals failure by
+ * throwing `redirect()`, and catching that would swallow the redirect. A Server
+ * Action is a public POST under the hood, so re-authorising here is not optional.
+ */
+export async function askAdvisorAction(
+  clientSessionId: string,
+  rawMessage: string,
+  language: Language = "en",
+): Promise<ActionResult<AdvisorTurn>> {
+  const { row } = await requireUserRow("farmer");
+
+  const messageText = rawMessage.trim();
+  if (!messageText) {
+    return { ok: false, error: "Type a question first." };
+  }
+  if (messageText.length > MAX_ADVISOR_MESSAGE) {
+    return {
+      ok: false,
+      error: `Keep it under ${MAX_ADVISOR_MESSAGE} characters.`,
+    };
+  }
+  if (typeof clientSessionId !== "string" || clientSessionId.length === 0) {
+    return { ok: false, error: "Missing chat session. Reload and try again." };
+  }
+
+  // Namespace the thread to this farmer. Never trust the client id alone.
+  const sessionKey = `advice:${row.id}:${clientSessionId}`;
+
+  try {
+    const conversation = await getOrCreateConversation(sessionKey, language);
+
+    await appendMessage({
+      conversationId: conversation.id,
+      role: "user",
+      content: messageText,
+    });
+
+    // Bound the whole agent run. A timeout degrades to a friendly reply rather
+    // than an error — the farmer always gets an answer, and the turn is logged.
+    const startedAt = Date.now();
+    const supervisorPromise = runSupervisor(messageText, language);
+    let result;
+    try {
+      result = await withTimeout(supervisorPromise, AI_TIMEOUTS.agent, "agent");
+    } catch (err) {
+      if (!(err instanceof TimeoutError)) throw err;
+      // Don't leave a rejected promise unobserved if it later settles.
+      supervisorPromise.catch(() => {});
+      result = {
+        intent: "advisory" as const,
+        source: "timeout",
+        model: undefined,
+        toolCalls: [{ error: "agent budget exceeded" }] as unknown[],
+        reply: {
+          role: "assistant" as const,
+          intent: "advisory" as const,
+          content:
+            language === "sw"
+              ? "Samahani, imechukua muda mrefu kujibu. Tafadhali jaribu tena."
+              : "Sorry, that took too long to answer. Please try again.",
+        },
+      };
+    }
+
+    const latencyMs = Date.now() - startedAt;
+    const reply = result.reply;
+
+    const assistantMessageId = await appendMessage({
+      conversationId: conversation.id,
+      role: "assistant",
+      content: reply.content,
+      data: reply.data,
+    });
+
+    await logAgentRun({
+      conversationId: conversation.id,
+      messageId: assistantMessageId,
+      intent: result.intent,
+      graphUsed: result.intent,
+      modelUsed: result.model ?? result.source,
+      toolCalls: result.toolCalls.length ? result.toolCalls : undefined,
+      structuredOutput: reply.data,
+      latencyMs,
+    });
+
+    return {
+      ok: true,
+      data: {
+        conversationId: conversation.id,
+        reply,
+        aiBacked: result.source !== "heuristic" && result.source !== "timeout",
+      },
+    };
+  } catch {
+    // Generic message only — never leak a stack trace or DB error to the client.
+    return { ok: false, error: "Couldn’t reach the advisor. Try again." };
   }
 }
 

@@ -90,23 +90,15 @@ export interface ConversationRecord extends Omit<Conversation, "messages"> {
   messages: (Omit<ConversationMessage, "imageUrl"> & { imageKey?: string })[];
 }
 
-/** Fetch a conversation with its messages in chronological order. */
-export async function getConversation(
-  id: string,
-): Promise<ConversationRecord | null> {
+/** Assemble a full conversation record from its row + ordered messages. */
+async function hydrateConversation(
+  conversation: ConversationRow,
+): Promise<ConversationRecord> {
   const sql = getSql();
-
-  const [conversation] = await sql<ConversationRow[]>`
-    SELECT id, session_id, language
-    FROM conversations
-    WHERE id = ${id}
-  `;
-  if (!conversation) return null;
-
   const rows = await sql<MessageRow[]>`
     SELECT id, role, content, image_key, data, created_at
     FROM messages
-    WHERE conversation_id = ${id}
+    WHERE conversation_id = ${conversation.id}
     ORDER BY created_at ASC
   `;
 
@@ -123,6 +115,45 @@ export async function getConversation(
       createdAt: r.created_at.toISOString(),
     })),
   };
+}
+
+/** Fetch a conversation with its messages in chronological order. */
+export async function getConversation(
+  id: string,
+): Promise<ConversationRecord | null> {
+  const sql = getSql();
+
+  const [conversation] = await sql<ConversationRow[]>`
+    SELECT id, session_id, language
+    FROM conversations
+    WHERE id = ${id}
+  `;
+  if (!conversation) return null;
+
+  return hydrateConversation(conversation);
+}
+
+/**
+ * Fetch a conversation by its `session_id`, read-only.
+ *
+ * Distinct from `getOrCreateConversation`, which upserts: this never writes, so
+ * it is safe on a read path (e.g. server-rendering chat history) and returns
+ * `null` when the session has no thread yet. Callers that key sessions per user
+ * (e.g. `advice:<userId>:<clientId>`) get user-scoped isolation for free.
+ */
+export async function getConversationBySession(
+  sessionId: string,
+): Promise<ConversationRecord | null> {
+  const sql = getSql();
+
+  const [conversation] = await sql<ConversationRow[]>`
+    SELECT id, session_id, language
+    FROM conversations
+    WHERE session_id = ${sessionId}
+  `;
+  if (!conversation) return null;
+
+  return hydrateConversation(conversation);
 }
 
 /* -------------------------------------------------------------------------- */
