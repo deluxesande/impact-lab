@@ -23,7 +23,10 @@ services:
       - ${APP_ENV_FILE:-.env}
     environment:
       NODE_ENV: production
-      DATABASE_URL: postgres://${POSTGRES_USER:-impactlab}:${POSTGRES_PASSWORD:-impactlab}@postgres:5432/${POSTGRES_DB:-impactlab}
+      # Credentials come only from the environment (.env / --env-file); no
+      # defaults are embedded here so the compose file carries zero secrets.
+      # `:?` makes a missing value a hard error rather than a silent weak default.
+      DATABASE_URL: postgres://${POSTGRES_USER:?set POSTGRES_USER}:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:?set POSTGRES_DB}
       MINIO_ENDPOINT: minio
       MINIO_PORT: 9000
       MINIO_USE_SSL: "false"
@@ -40,15 +43,16 @@ services:
     container_name: impact-lab-postgres
     restart: unless-stopped
     environment:
-      POSTGRES_USER: ${POSTGRES_USER:-impactlab}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-impactlab}
-      POSTGRES_DB: ${POSTGRES_DB:-impactlab}
+      # Required — supplied via .env / --env-file, never hardcoded here.
+      POSTGRES_USER: ${POSTGRES_USER:?set POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB:?set POSTGRES_DB}
     ports:
       - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
     volumes:
       - postgres-data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-impactlab} -d ${POSTGRES_DB:-impactlab}"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
       interval: 5s
       timeout: 5s
       retries: 10
@@ -60,8 +64,9 @@ services:
     restart: unless-stopped
     command: server /data --console-address ":9001"
     environment:
-      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
-      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
+      # Required — supplied via .env / --env-file, never hardcoded here.
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:?set MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?set MINIO_ROOT_PASSWORD}
     ports:
       - "127.0.0.1:${MINIO_PORT:-9000}:9000"      # S3 API
       - "127.0.0.1:${MINIO_CONSOLE_PORT:-9001}:9001"  # web console

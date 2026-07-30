@@ -10,7 +10,8 @@
     "test": "bun test",
     "db:migrate": "bun run src/lib/db/migrate.ts",
     "agents:inspect": "bun run src/lib/db/inspect-agents.ts",
-    "db:seed": "bun run src/lib/db/seed.ts"
+    "db:seed": "bun run src/lib/db/seed.ts",
+    "prepare": "git config core.hooksPath .githooks || true"
   },
   "dependencies": {
     "@clerk/nextjs": "^7.6.1",

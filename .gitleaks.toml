@@ -1,0 +1,32 @@
+# gitleaks configuration for Impact Lab.
+#
+# Extends the built-in ruleset (all default provider detectors stay active) and
+# adds a narrow allowlist for the intentional, non-secret placeholders that must
+# remain in the repo: the template values in .env.example and the docker-compose
+# variable interpolation. Everything else — real Clerk/Groq/Google/Shamba keys,
+# connection strings, private keys — is still caught and fails CI.
+#
+# Run locally:  gitleaks detect --config .gitleaks.toml --redact -v
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Non-secret placeholders and env-var interpolation that are safe by design."
+
+# Files that hold only templates/interpolation, never real values.
+paths = [
+  '''\.env\.example$''',
+  '''docker-compose\.yml$''',
+  '''\.gitleaks\.toml$''',
+  # Test fixtures use obviously-fake keys (e.g. "sr_sec_test").
+  '''.*\.test\.ts$''',
+]
+
+# Literal placeholder tokens, allowlisted by value so they can appear anywhere
+# without tripping the generic-password / connection-string detectors.
+regexes = [
+  '''CHANGE_ME_[A-Z_]+''',
+  '''\$\{[A-Z_]+(:[-?][^}]*)?\}''',   # ${VAR}, ${VAR:-default}, ${VAR:?error}
+  '''sr_sec_test''',
+  '''(pk|sk)_(test|live)_\.\.\.''',    # doc examples like "sk_test_..."
+]
