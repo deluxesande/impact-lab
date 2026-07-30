@@ -22,11 +22,19 @@ paths = [
   '''.*\.test\.ts$''',
 ]
 
-# Literal placeholder tokens, allowlisted by value so they can appear anywhere
-# without tripping the generic-password / connection-string detectors.
+# Literal placeholder / known-local-default tokens, allowlisted by value so they
+# can appear in the template + compose file without tripping the generic-password
+# / connection-string detectors. These are throwaway local-dev credentials that
+# only ever run against a disposable local Docker stack — never production, never
+# a real secret. Real provider keys (Clerk/Groq/Google/Shamba) are unaffected and
+# still caught.
 regexes = [
   '''CHANGE_ME_[A-Z_]+''',
   '''\$\{[A-Z_]+(:[-?][^}]*)?\}''',   # ${VAR}, ${VAR:-default}, ${VAR:?error}
   '''sr_sec_test''',
   '''(pk|sk)_(test|live)_\.\.\.''',    # doc examples like "sk_test_..."
+  # Local-dev defaults for the disposable Docker Postgres/MinIO stack.
+  '''impactlab''',
+  '''minioadmin''',
+  '''postgres://impactlab:impactlab@''',
 ]
