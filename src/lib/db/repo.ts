@@ -49,6 +49,8 @@ interface MessageRow {
   image_key: string | null;
   data: PricingData | null;
   created_at: Date;
+  /** agent_runs.model_used for this message, when a run logged one. */
+  model_used: string | null;
 }
 
 /* -------------------------------------------------------------------------- */
@@ -87,7 +89,54 @@ export async function getOrCreateConversation(
  * any MinIO dependency.
  */
 export interface ConversationRecord extends Omit<Conversation, "messages"> {
-  messages: (Omit<ConversationMessage, "imageUrl"> & { imageKey?: string })[];
+  messages: (Omit<ConversationMessage, "imageUrl"> & {
+    imageKey?: string;
+    /**
+     * The provider/source that produced an assistant turn, from
+     * agent_runs.model_used ('gemini' | 'groq' | 'openai' when a model ran, or
+     * 'heuristic' | 'timeout' | the graph source on fallback). Lets a read path
+     * recover per-message provenance instead of assuming every reply was AI.
+     */
+    modelUsed?: string;
+  })[];
+}
+
+/** Assemble a full conversation record from its row + ordered messages. */
+async function hydrateConversation(
+  conversation: ConversationRow,
+): Promise<ConversationRecord> {
+  const sql = getSql();
+  // LEFT JOIN the latest agent_runs row per message so assistant-turn
+  // provenance (model_used) survives a reload. DISTINCT ON keeps one run per
+  // message (the newest), and messages with no run (all user turns) keep null.
+  const rows = await sql<MessageRow[]>`
+    SELECT m.id, m.role, m.content, m.image_key, m.data, m.created_at, r.model_used
+    FROM messages m
+    LEFT JOIN LATERAL (
+      SELECT model_used
+      FROM agent_runs
+      WHERE agent_runs.message_id = m.id
+      ORDER BY agent_runs.created_at DESC
+      LIMIT 1
+    ) r ON true
+    WHERE m.conversation_id = ${conversation.id}
+    ORDER BY m.created_at ASC
+  `;
+
+  return {
+    id: conversation.id,
+    sessionId: conversation.session_id,
+    language: conversation.language,
+    messages: rows.map((r) => ({
+      id: r.id,
+      role: r.role,
+      content: r.content,
+      ...(r.image_key ? { imageKey: r.image_key } : {}),
+      ...(r.data ? { data: r.data } : {}),
+      ...(r.model_used ? { modelUsed: r.model_used } : {}),
+      createdAt: r.created_at.toISOString(),
+    })),
+  };
 }
 
 /** Fetch a conversation with its messages in chronological order. */
@@ -103,26 +152,30 @@ export async function getConversation(
   `;
   if (!conversation) return null;
 
-  const rows = await sql<MessageRow[]>`
-    SELECT id, role, content, image_key, data, created_at
-    FROM messages
-    WHERE conversation_id = ${id}
-    ORDER BY created_at ASC
-  `;
+  return hydrateConversation(conversation);
+}
 
-  return {
-    id: conversation.id,
-    sessionId: conversation.session_id,
-    language: conversation.language,
-    messages: rows.map((r) => ({
-      id: r.id,
-      role: r.role,
-      content: r.content,
-      ...(r.image_key ? { imageKey: r.image_key } : {}),
-      ...(r.data ? { data: r.data } : {}),
-      createdAt: r.created_at.toISOString(),
-    })),
-  };
+/**
+ * Fetch a conversation by its `session_id`, read-only.
+ *
+ * Distinct from `getOrCreateConversation`, which upserts: this never writes, so
+ * it is safe on a read path (e.g. server-rendering chat history) and returns
+ * `null` when the session has no thread yet. Callers that key sessions per user
+ * (e.g. `advice:<userId>:<clientId>`) get user-scoped isolation for free.
+ */
+export async function getConversationBySession(
+  sessionId: string,
+): Promise<ConversationRecord | null> {
+  const sql = getSql();
+
+  const [conversation] = await sql<ConversationRow[]>`
+    SELECT id, session_id, language
+    FROM conversations
+    WHERE session_id = ${sessionId}
+  `;
+  if (!conversation) return null;
+
+  return hydrateConversation(conversation);
 }
 
 /* -------------------------------------------------------------------------- */
@@ -152,6 +205,42 @@ export async function appendMessage(input: AppendMessageInput): Promise<string> 
     RETURNING id
   `;
   return row.id;
+}
+
+/**
+ * Append a user turn and its assistant reply as a single transaction.
+ *
+ * Either both rows land or neither does, so a persisted user message can never
+ * be orphaned by a failure between the two writes. Returns the assistant message
+ * id (the one `logAgentRun` references). The two turns share `created_at`
+ * ordering via sequential inserts inside the transaction.
+ */
+export async function appendTurnPair(input: {
+  conversationId: string;
+  userContent: string;
+  userImageKey?: string;
+  assistantContent: string;
+  assistantData?: PricingData;
+}): Promise<{ userMessageId: string; assistantMessageId: string }> {
+  const sql = getSql();
+  return sql.begin(async (tx) => {
+    const [userRow] = await tx<{ id: string }[]>`
+      INSERT INTO messages (conversation_id, role, content, image_key)
+      VALUES (${input.conversationId}, 'user', ${input.userContent}, ${input.userImageKey ?? null})
+      RETURNING id
+    `;
+    const [assistantRow] = await tx<{ id: string }[]>`
+      INSERT INTO messages (conversation_id, role, content, data)
+      VALUES (
+        ${input.conversationId},
+        'assistant',
+        ${input.assistantContent},
+        ${input.assistantData ? toJsonb(sql, input.assistantData) : null}
+      )
+      RETURNING id
+    `;
+    return { userMessageId: userRow.id, assistantMessageId: assistantRow.id };
+  });
 }
 
 /* -------------------------------------------------------------------------- */

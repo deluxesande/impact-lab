@@ -10,13 +10,28 @@ import { cn } from "@/lib/utils";
  *
  * Implemented as two links rather than a client toggle: the value is already URL
  * state, so no JavaScript is needed and it survives a refresh.
+ *
+ * `basePath` lets a surface point the toggle at its own route (e.g. the advisory
+ * chat). It defaults to /farmer/new so existing call sites are unchanged.
+ *
+ * `label` sets the group's accessible name; it defaults to the price-suggestion
+ * wording so existing call sites are unchanged, and the advisory chat overrides
+ * it so screen-reader users hear the right context.
  */
 const OPTIONS = [
   { value: "en", label: "English" },
   { value: "sw", label: "Kiswahili" },
 ] as const;
 
-export function LanguageToggle({ language }: { language: "en" | "sw" }) {
+export function LanguageToggle({
+  language,
+  basePath = "/farmer/new",
+  label = "Language for price suggestions",
+}: {
+  language: "en" | "sw";
+  basePath?: string;
+  label?: string;
+}) {
   return (
     <div>
       <p className="mb-1.5 text-xs font-medium text-muted-foreground">
@@ -24,7 +39,7 @@ export function LanguageToggle({ language }: { language: "en" | "sw" }) {
       </p>
       <div
         role="group"
-        aria-label="Language for price suggestions"
+        aria-label={label}
         className="inline-flex rounded-lg border border-border bg-card p-0.5"
       >
         {OPTIONS.map((option) => {
@@ -32,7 +47,7 @@ export function LanguageToggle({ language }: { language: "en" | "sw" }) {
           return (
             <Link
               key={option.value}
-              href={`/farmer/new?lang=${option.value}`}
+              href={`${basePath}?lang=${option.value}`}
               aria-current={active ? "true" : undefined}
               className={cn(
                 "focus-visible:ring-ring rounded-md px-3 py-1.5 text-sm transition-colors focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:outline-none",

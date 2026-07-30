@@ -16,6 +16,7 @@ export type NavItem = {
 export const FARMER_NAV: NavItem[] = [
   { href: "/farmer", label: "Dashboard", icon: Home },
   { href: "/farmer/new", label: "New listing", icon: Leaf },
+  { href: "/farmer/advice", label: "Advice", icon: ChatDots },
 ];
 
 export const CONSUMER_NAV: NavItem[] = [

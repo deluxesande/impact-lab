@@ -88,3 +88,33 @@ jobs:
       # route is dynamic and Clerk is never invoked at build time.
       - name: Build
         run: bun run build
+
+  # Secret scanning — blocks a merge/push if a credential is ever committed.
+  # Runs in parallel with the build job; independent, so a leak fails CI even
+  # when the app compiles fine. Configuration lives in .gitleaks.toml (the
+  # allowlist for the placeholder values in .env.example).
+  secret-scan:
+    name: Secret scan (gitleaks)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout (full history)
+        uses: actions/checkout@v4
+        with:
+          # gitleaks scans commit history, so it needs the whole tree, not a
+          # shallow clone.
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Run gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          # The pinned action reads its config from .gitleaks.toml at the repo
+          # root. No GITLEAKS_LICENSE is needed for public repos.
+          GITLEAKS_CONFIG: .gitleaks.toml
+          # Required by the action to scan pull requests (it reads PR metadata
+          # via the API). This is the auto-created, job-scoped token GitHub
+          # Actions injects at runtime — NOT a personal access token, and never
+          # stored in the repo. `persist-credentials: false` above still keeps it
+          # out of .git/config.
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -1,4 +1,5 @@
 import {
+  getConversationBySession,
   getListing,
   listActiveListings,
   listFarmerListings,
@@ -7,7 +8,7 @@ import {
 } from "@/lib/db/repo";
 import { presentListings } from "@/lib/api/present-listing";
 import { toListingViews, toOrderView, type ListingView, type OrderView } from "./view";
-import type { Order } from "@/lib/ai/types";
+import type { ConversationMessage, Order } from "@/lib/ai/types";
 
 /**
  * Read side of the web surface.
@@ -52,6 +53,49 @@ export async function farmerListingViews(farmerId: string): Promise<ListingView[
 export async function farmerOrderViews(farmerId: string): Promise<OrderView[]> {
   const orders = await listOrdersForFarmer(farmerId);
   return withProduceNames(orders);
+}
+
+/**
+ * A restored advisory-chat turn. Extends the contract message with `aiBacked`,
+ * derived from persisted provenance so a reloaded reply is labelled honestly
+ * (model-backed vs heuristic/timeout fallback) rather than assumed to be AI.
+ */
+export type AdvisorMessage = ConversationMessage & { aiBacked?: boolean };
+
+/** Provenance values that mean "no model actually answered". */
+const NON_AI_SOURCES = new Set(["heuristic", "timeout"]);
+
+/**
+ * Prior advisory-chat turns for a farmer's session, oldest first.
+ *
+ * The caller passes the **user-scoped** session key (`advice:<userId>:<clientId>`,
+ * the same one `askAdvisorAction` writes under), so one farmer can never load
+ * another's thread. Returns `[]` for a session with no history yet.
+ *
+ * Advisory turns never carry images, so `imageKey` is simply dropped — no MinIO
+ * presigning is needed here, unlike the listing read path.
+ *
+ * `aiBacked` is recovered from `agent_runs.model_used`: a model provider name
+ * means a real model answered; 'heuristic'/'timeout' (or a missing run) means it
+ * did not. Only assistant turns carry it.
+ */
+export async function advisorHistory(
+  sessionKey: string,
+): Promise<AdvisorMessage[]> {
+  const record = await getConversationBySession(sessionKey);
+  if (!record) return [];
+  // Drop the private `imageKey` (advisory turns carry none anyway) by projecting
+  // only the fields the client contract exposes, plus honest provenance.
+  return record.messages.map((m): AdvisorMessage => ({
+    id: m.id,
+    role: m.role,
+    content: m.content,
+    ...(m.data ? { data: m.data } : {}),
+    ...(m.role === "assistant"
+      ? { aiBacked: m.modelUsed ? !NON_AI_SOURCES.has(m.modelUsed) : false }
+      : {}),
+    createdAt: m.createdAt,
+  }));
 }
 
 /**

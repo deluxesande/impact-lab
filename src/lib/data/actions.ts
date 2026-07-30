@@ -2,13 +2,22 @@
 
 import { revalidatePath } from "next/cache";
 import { requireUserRow } from "@/lib/auth/current-user-row";
-import { createListing, createOrder, getListing, listActiveListings } from "@/lib/db/repo";
+import {
+  appendTurnPair,
+  createListing,
+  createOrder,
+  getListing,
+  getOrCreateConversation,
+  listActiveListings,
+  logAgentRun,
+} from "@/lib/db/repo";
 import { runCartGraph } from "@/lib/ai/graphs/cart";
 import { runPricingGraph } from "@/lib/ai/graphs/pricing";
 import { runSupervisor } from "@/lib/ai/graphs/supervisor";
+import { runSupervisorWithBudget } from "@/lib/ai/run-with-budget";
 import { withProduceNames } from "./queries";
 import { matchProduce } from "./produce";
-import type { CartItem, Language, Order, PricingData } from "@/lib/ai/types";
+import type { CartItem, FarmerAgentReply, Language, Order, PricingData } from "@/lib/ai/types";
 import type { OrderView } from "./view";
 
 /**
@@ -299,6 +308,120 @@ export async function placeOrderAction(
     return { ok: true, data: { orders: await withProduceNames(placed), failed } };
   } catch (err) {
     return { ok: false, error: message(err, "Couldn’t place that order.") };
+  }
+}
+
+/* -------------------------------------------------------------------------- */
+/* Farmer advisory chat                                                       */
+/* -------------------------------------------------------------------------- */
+
+/** Same cap the /api/farmer/agent route enforces — bounds token cost + flooding. */
+const MAX_ADVISOR_MESSAGE = 2000;
+
+export type AdvisorTurn = {
+  /** Conversation this exchange was persisted under. */
+  conversationId: string;
+  reply: FarmerAgentReply;
+  /**
+   * Whether a real model produced the reply. False when the supervisor fell back
+   * to its heuristic (no provider key) or the run timed out. The UI must label
+   * honestly and never claim AI it did not use — see price-card.tsx.
+   */
+  aiBacked: boolean;
+};
+
+/**
+ * Ask the farming advisor a question — the web co-pilot's advisory chat.
+ *
+ * Mirrors POST /api/farmer/agent (the Android contract) but runs `runSupervisor`
+ * **in-process**, the same way every other web Server Action reaches the graphs.
+ * It persists both turns and an `agent_runs` row so history survives reloads and
+ * the refinement dataset keeps growing, identical to the route.
+ *
+ * SECURITY — the conversation key is namespaced to the authenticated user
+ * (`advice:<users.id>:<clientSessionId>`), not the raw client value. Conversations
+ * are keyed only by `session_id` and `getConversation` is not user-scoped, so a
+ * bare client id would let one farmer append to — or later read — another's
+ * thread just by guessing it. Binding the key to `row.id` closes that.
+ *
+ * `requireUserRow("farmer")` runs **outside** the try/catch: it signals failure by
+ * throwing `redirect()`, and catching that would swallow the redirect. A Server
+ * Action is a public POST under the hood, so re-authorising here is not optional.
+ */
+export async function askAdvisorAction(
+  clientSessionId: string,
+  rawMessage: string,
+  language: Language = "en",
+): Promise<ActionResult<AdvisorTurn>> {
+  const { row } = await requireUserRow("farmer");
+
+  // Validate BEFORE any coercion. A Server Action is a public POST, so the
+  // arguments are untrusted: guard `clientSessionId` and confirm `rawMessage`
+  // is a string before calling `.trim()`, or a malformed call would throw a
+  // TypeError (an opaque 500) instead of returning a friendly error.
+  if (typeof clientSessionId !== "string" || clientSessionId.length === 0) {
+    return { ok: false, error: "Missing chat session. Reload and try again." };
+  }
+  if (typeof rawMessage !== "string") {
+    return { ok: false, error: "Type a question first." };
+  }
+
+  const messageText = rawMessage.trim();
+  if (!messageText) {
+    return { ok: false, error: "Type a question first." };
+  }
+  if (messageText.length > MAX_ADVISOR_MESSAGE) {
+    return {
+      ok: false,
+      error: `Keep it under ${MAX_ADVISOR_MESSAGE} characters.`,
+    };
+  }
+
+  // Namespace the thread to this farmer. Never trust the client id alone.
+  const sessionKey = `advice:${row.id}:${clientSessionId}`;
+
+  try {
+    // Run the agent under budget FIRST, before persisting anything. Writing the
+    // user turn up front risks an orphan: if the supervisor then fails, the
+    // outer catch returns an error but a lone user message is already committed
+    // and would resurface on reload. (Timeouts don't throw — they degrade to a
+    // reply — so those are still persisted, matching the API route.)
+    const { result, latencyMs } = await runSupervisorWithBudget(messageText, language);
+    const reply = result.reply;
+
+    const conversation = await getOrCreateConversation(sessionKey, language);
+
+    // Persist both turns atomically: either the pair lands or neither does, so a
+    // failure between the two inserts can't leave the user message orphaned.
+    const { assistantMessageId } = await appendTurnPair({
+      conversationId: conversation.id,
+      userContent: messageText,
+      assistantContent: reply.content,
+      assistantData: reply.data,
+    });
+
+    await logAgentRun({
+      conversationId: conversation.id,
+      messageId: assistantMessageId,
+      intent: result.intent,
+      graphUsed: result.intent,
+      modelUsed: result.model ?? result.source,
+      toolCalls: result.toolCalls.length ? result.toolCalls : undefined,
+      structuredOutput: reply.data,
+      latencyMs,
+    });
+
+    return {
+      ok: true,
+      data: {
+        conversationId: conversation.id,
+        reply,
+        aiBacked: result.source !== "heuristic" && result.source !== "timeout",
+      },
+    };
+  } catch {
+    // Generic message only — never leak a stack trace or DB error to the client.
+    return { ok: false, error: "Couldn’t reach the advisor. Try again." };
   }
 }
 

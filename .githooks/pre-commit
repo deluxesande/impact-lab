@@ -1,0 +1,30 @@
+#!/usr/bin/env bash
+#
+# Pre-commit secret scan. Blocks a commit if gitleaks finds a credential in the
+# staged changes. Enabled automatically by `bun install` (the "prepare" script
+# points core.hooksPath here).
+#
+# If gitleaks isn't installed the hook does NOT block — it prints install hints
+# and lets the commit through, so a missing local tool never wedges anyone. CI
+# still runs gitleaks on every push/PR as the hard gate.
+set -euo pipefail
+
+if ! command -v gitleaks >/dev/null 2>&1; then
+  echo "[pre-commit] gitleaks not found — skipping local secret scan."
+  echo "[pre-commit] Install it to catch secrets before they're committed:"
+  echo "             brew install gitleaks   |   https://github.com/gitleaks/gitleaks#installing"
+  echo "[pre-commit] (CI still scans every push/PR.)"
+  exit 0
+fi
+
+echo "[pre-commit] Scanning staged changes for secrets…"
+if ! gitleaks protect --staged --redact --config .gitleaks.toml; then
+  echo ""
+  echo "[pre-commit] ✖ A secret was detected in your staged changes."
+  echo "[pre-commit]   Remove it (move real values into .env.local, which is gitignored),"
+  echo "[pre-commit]   then commit again. To override in a true false-positive, add an"
+  echo "[pre-commit]   allowlist entry in .gitleaks.toml — never commit a real credential."
+  exit 1
+fi
+
+echo "[pre-commit] ✓ No secrets in staged changes."

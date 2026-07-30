@@ -3,6 +3,7 @@ import { ChatGroq } from "@langchain/groq";
 import { ChatOpenAI } from "@langchain/openai";
 import type { BaseChatModel } from "@langchain/core/language_models/chat_models";
 import { HumanMessage, type BaseMessageLike } from "@langchain/core/messages";
+import { OutputParserException } from "@langchain/core/output_parsers";
 import type { z } from "zod";
 import { withTimeout, AI_TIMEOUTS, TimeoutError } from "@/lib/ai/timeout";
 
@@ -86,11 +87,11 @@ export function hasModelProvider(): boolean {
   return buildProviders().length > 0;
 }
 
-/** Only timeout and parse/validation errors are worth retrying once. */
+/** Only timeout and structured-output parse errors are worth retrying once. */
 function isRetryableError(err: unknown): boolean {
   if (err instanceof TimeoutError) return true;
-  const msg = String(err).toLowerCase();
-  return msg.includes("parse") || msg.includes("schema");
+  if (err instanceof OutputParserException) return true;
+  return false;
 }
 
 export interface StructuredResult<T> {
