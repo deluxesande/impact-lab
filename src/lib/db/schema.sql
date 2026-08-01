@@ -168,3 +168,44 @@ CREATE INDEX IF NOT EXISTS orders_consumer_idx
 -- Powers the farmer dashboard's "incoming orders" via listings join.
 CREATE INDEX IF NOT EXISTS orders_listing_idx
   ON orders (listing_id, created_at DESC);
+
+/* -------------------------------------------------------------------------- */
+/* Mutually-exclusive role enforcement (Phase: strict identity)               */
+/*                                                                            */
+/* NON-DESTRUCTIVE. Every statement below is additive and idempotent:         */
+/*   - ADD COLUMN IF NOT EXISTS never touches existing data.                  */
+/*   - The phone_number column is nullable so pre-existing `users` rows       */
+/*     (which have no phone) remain valid — the app backfills on next contact.*/
+/*   - The UNIQUE index is PARTIAL (WHERE phone_number IS NOT NULL) so the     */
+/*     many legacy rows with NULL phone don't collide with each other. In     */
+/*     Postgres a plain UNIQUE already lets multiple NULLs through, but the    */
+/*     partial index makes the intent explicit and keeps the index small.     */
+/* -------------------------------------------------------------------------- */
+
+-- The one physical-identity anchor. A single human = one phone number = one
+-- role, forever. Nullable for backfill of legacy rows; the webhook writes it
+-- for every new user and rejects (409) a phone already present under any role.
+ALTER TABLE users
+  ADD COLUMN IF NOT EXISTS phone_number text;
+
+-- Enforce "one human, one account". Partial UNIQUE: only non-null phones are
+-- constrained, so legacy NULL rows coexist. This is the hard DB-level guard
+-- that a user cannot bypass by signing up with a different email — the phone
+-- collides and the INSERT fails, which the webhook translates to a 409.
+CREATE UNIQUE INDEX IF NOT EXISTS users_phone_number_key
+  ON users (phone_number)
+  WHERE phone_number IS NOT NULL;
+
+-- 1:1 profile tables. user_id is BOTH the FK and the PRIMARY KEY, which makes
+-- the 1:1 cardinality structural (a user can have at most one row here). ON
+-- DELETE CASCADE mirrors the listings/orders tables. These are intentionally
+-- thin now; extend with role-specific columns as the surfaces grow.
+CREATE TABLE IF NOT EXISTS farmer_profiles (
+  user_id    uuid PRIMARY KEY REFERENCES users (id) ON DELETE CASCADE,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS consumer_profiles (
+  user_id    uuid PRIMARY KEY REFERENCES users (id) ON DELETE CASCADE,
+  created_at timestamptz NOT NULL DEFAULT now()
+);

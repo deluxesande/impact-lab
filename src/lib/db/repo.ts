@@ -315,6 +315,92 @@ export async function getOrCreateUser(
   return row;
 }
 
+/**
+ * Raised when a phone number already belongs to another account. The webhook
+ * turns this into a 409 so a single human cannot open a second (differently
+ * emailed) account against a phone they already registered.
+ */
+export class PhoneAlreadyRegisteredError extends Error {
+  constructor(public readonly phoneNumber: string) {
+    super(`Phone number ${phoneNumber} is already registered to an account.`);
+    this.name = "PhoneAlreadyRegisteredError";
+  }
+}
+
+/** Look up the user owning a phone number, regardless of role. Null if free. */
+export async function findUserByPhone(phoneNumber: string): Promise<UserRow | null> {
+  const sql = getSql();
+  const [row] = await sql<UserRow[]>`
+    SELECT id, clerk_id AS "clerkId", role
+    FROM users
+    WHERE phone_number = ${phoneNumber}
+  `;
+  return row ?? null;
+}
+
+/**
+ * Atomically create a user + their 1:1 profile row, enforcing phone uniqueness.
+ *
+ * The whole thing runs in ONE transaction (sql.begin), so either the users row
+ * AND the matching profile row both land, or nothing does — no half-provisioned
+ * identity. The phone check is belt-and-braces:
+ *
+ *   1. An explicit pre-check inside the transaction returns a clean 409 for the
+ *      common case, and
+ *   2. the partial UNIQUE index (users_phone_number_key) is the real guard —
+ *      it closes the race where two requests pass the pre-check concurrently.
+ *      Its violation (SQLSTATE 23505) is caught and normalised to the same
+ *      PhoneAlreadyRegisteredError.
+ *
+ * Idempotent on clerk_id: Clerk can deliver `user.created` more than once, so a
+ * replay for an existing clerk_id returns the existing row instead of throwing.
+ */
+export async function createUserWithProfile(input: {
+  clerkId: string;
+  role: UserRole;
+  phoneNumber: string;
+}): Promise<UserRow> {
+  const sql = getSql();
+  try {
+    return await sql.begin(async (tx) => {
+      // Replay-safe: if this Clerk user already exists, return it untouched.
+      const [existing] = await tx<UserRow[]>`
+        SELECT id, clerk_id AS "clerkId", role FROM users WHERE clerk_id = ${input.clerkId}
+      `;
+      if (existing) return existing;
+
+      // Pre-check: is this physical identity already taken under ANY role?
+      const [phoneOwner] = await tx<{ id: string }[]>`
+        SELECT id FROM users WHERE phone_number = ${input.phoneNumber}
+      `;
+      if (phoneOwner) throw new PhoneAlreadyRegisteredError(input.phoneNumber);
+
+      const [user] = await tx<UserRow[]>`
+        INSERT INTO users (clerk_id, role, phone_number)
+        VALUES (${input.clerkId}, ${input.role}, ${input.phoneNumber})
+        RETURNING id, clerk_id AS "clerkId", role
+      `;
+
+      // 1:1 profile in the same transaction, chosen by role.
+      if (input.role === "farmer") {
+        await tx`INSERT INTO farmer_profiles (user_id) VALUES (${user.id})`;
+      } else {
+        await tx`INSERT INTO consumer_profiles (user_id) VALUES (${user.id})`;
+      }
+
+      return user;
+    });
+  } catch (err) {
+    // Concurrent insert that beat our pre-check: the unique index rejects it.
+    // porsager/postgres surfaces the SQLSTATE on `err.code`.
+    if (err instanceof PhoneAlreadyRegisteredError) throw err;
+    if (typeof err === "object" && err !== null && (err as { code?: string }).code === "23505") {
+      throw new PhoneAlreadyRegisteredError(input.phoneNumber);
+    }
+    throw err;
+  }
+}
+
 /* -------------------------------------------------------------------------- */
 /* Listings                                                                   */
 /* -------------------------------------------------------------------------- */
