@@ -392,9 +392,16 @@ export async function createUserWithProfile(input: {
     });
   } catch (err) {
     // Concurrent insert that beat our pre-check: the unique index rejects it.
-    // porsager/postgres surfaces the SQLSTATE on `err.code`.
+    // porsager/postgres surfaces the SQLSTATE on `err.code` and the constraint
+    // name on `err.constraint`. Only normalize the phone-number uniqueness
+    // violation; rethrow other unique violations (e.g. clerk_id) and all else.
     if (err instanceof PhoneAlreadyRegisteredError) throw err;
-    if (typeof err === "object" && err !== null && (err as { code?: string }).code === "23505") {
+    if (
+      typeof err === "object" &&
+      err !== null &&
+      (err as { code?: string }).code === "23505" &&
+      (err as { constraint?: string }).constraint === "users_phone_number_key"
+    ) {
       throw new PhoneAlreadyRegisteredError(input.phoneNumber);
     }
     throw err;

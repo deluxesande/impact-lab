@@ -38,17 +38,22 @@ export const runtime = "nodejs";
 interface ClerkPhoneNumber {
   id: string;
   phone_number: string;
+  verification?: { status: "verified" | "unverified" | string } | null;
 }
 
 /**
- * Pick the user's primary phone number from the webhook payload.
- * Falls back to the first phone if `primary_phone_number_id` is absent.
+ * Pick the user's primary *verified* phone number from the webhook payload.
+ * Falls back to the first verified phone if `primary_phone_number_id` is absent.
+ * Returns null when no verified number exists.
  */
 function extractPhoneNumber(data: {
   phone_numbers?: ClerkPhoneNumber[];
   primary_phone_number_id?: string | null;
 }): string | null {
-  const phones = data.phone_numbers ?? [];
+  const phones = (data.phone_numbers ?? []).filter(
+    (p): p is ClerkPhoneNumber & { verification: { status: "verified" } } =>
+      p.verification?.status === "verified",
+  );
   if (phones.length === 0) return null;
   const primary = data.primary_phone_number_id
     ? phones.find((p) => p.id === data.primary_phone_number_id)
@@ -99,11 +104,13 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   const phoneNumber = extractPhoneNumber(data);
   if (!phoneNumber) {
     // Phone is the physical-identity anchor for mutual exclusivity. If Clerk is
-    // configured to collect it, this shouldn't happen; surface it loudly.
-    console.error(`[clerk webhook] user.created ${clerkId} has no phone number; cannot enforce identity.`);
+    // configured to collect it, this shouldn't happen; surface it loudly but
+    // return 200 with a warning (not 422) so Clerk doesn't retry endlessly —
+    // same pattern as the missing-role handling above.
+    console.error(`[clerk webhook] user.created ${clerkId} has no verified phone number; cannot enforce identity.`);
     return NextResponse.json(
-      { error: { code: "missing_phone", message: "A phone number is required to provision this account." } },
-      { status: 422 },
+      { ok: true, warning: "no_verified_phone" },
+      { status: 200 },
     );
   }
 

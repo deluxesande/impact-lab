@@ -192,9 +192,9 @@ ALTER TABLE users
 -- constrained, so legacy NULL rows coexist. This is the hard DB-level guard
 -- that a user cannot bypass by signing up with a different email — the phone
 -- collides and the INSERT fails, which the webhook translates to a 409.
-CREATE UNIQUE INDEX IF NOT EXISTS users_phone_number_key
-  ON users (phone_number)
-  WHERE phone_number IS NOT NULL;
+-- NOTE: The unique index is created CONCURRENTLY in a separate non-transactional
+-- step (see src/lib/db/migrate.ts) because CREATE INDEX CONCURRENTLY cannot
+-- run inside a transaction block.
 
 -- 1:1 profile tables. user_id is BOTH the FK and the PRIMARY KEY, which makes
 -- the 1:1 cardinality structural (a user can have at most one row here). ON
